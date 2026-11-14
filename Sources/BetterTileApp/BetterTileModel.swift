@@ -45,6 +45,33 @@ protocol BetterTileWindowSystem: TargetedWindowSystem, WindowEventSource, Window
 
 extension AccessibilityWindowSystem: BetterTileWindowSystem {}
 
+/// An application that the workspace reported as launched.
+struct LaunchedApplication: Equatable, Sendable {
+    var processIdentifier: Int32
+    /// True for an application whose windows BetterTile reads: a regular
+    /// application that is not hidden, has not quit, and is not BetterTile. A
+    /// menu-bar application, a background helper or an agent starts no discovery.
+    var isManaged: Bool
+
+    init(processIdentifier: Int32, isManaged: Bool) {
+        self.processIdentifier = processIdentifier
+        self.isManaged = isManaged
+    }
+
+    init(processIdentifier: Int32, activationPolicy: NSApplication.ActivationPolicy, isHidden: Bool,
+         isTerminated: Bool, ownProcessIdentifier: Int32 = getpid()) {
+        self.processIdentifier = processIdentifier
+        isManaged = !isTerminated && AccessibilityWindowSystem.shouldManageApplication(
+            processIdentifier: processIdentifier, ownProcessIdentifier: ownProcessIdentifier,
+            activationPolicy: activationPolicy, isHidden: isHidden, includeHidden: false)
+    }
+
+    init(_ application: NSRunningApplication) {
+        self.init(processIdentifier: application.processIdentifier, activationPolicy: application.activationPolicy,
+                  isHidden: application.isHidden, isTerminated: application.isTerminated)
+    }
+}
+
 extension BetterTileWindowSystem {
     var unresponsiveApplicationRecoveryDeadlines: [Int32: TimeInterval] { [:] }
     var hiddenApplicationWindowIDs: Set<WindowID> { [] }
@@ -3061,6 +3088,7 @@ final class BetterTileModel {
         for id in Array(completedRequestFocus.keys) { releaseCompletedRequestFocus(id) }
         paneApplicationArrivalGuards.removeAll()
         cancelPendingFocusRestore(on: nil)
+        for pid in Array(launchDiscoveries.keys) { endLaunchDiscovery(pid, reason: "shutdown") }
         guard !isShutDown else { return }
         paneGapRelayoutTask?.cancel()
         paneGapRelayoutTask = nil
@@ -3274,16 +3302,23 @@ final class BetterTileModel {
         ]
         for name in topologyNames {
             notificationTokens.append(workspaceCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] notification in
+                let application = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+                // Read on the posting turn: the application's state is the state at launch.
+                let launched = name == NSWorkspace.didLaunchApplicationNotification ? application.map { LaunchedApplication($0) } : nil
+                let quitPID = name == NSWorkspace.didTerminateApplicationNotification ? application?.processIdentifier : nil
                 #if DEBUG
-                if name == NSWorkspace.didLaunchApplicationNotification,
-                   MainActor.assumeIsolated({ ArrivalTrace.shared.isEnabled }),
-                   let pid = (notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.processIdentifier {
-                    MainActor.assumeIsolated { ArrivalTrace.shared.record("app_launch_notification", pid: pid) }
+                if let launched, MainActor.assumeIsolated({ ArrivalTrace.shared.isEnabled }) {
+                    MainActor.assumeIsolated { ArrivalTrace.shared.record("app_launch_notification", pid: launched.processIdentifier,
+                        outcome: launched.isManaged ? "managed" : "not_managed") }
                 }
                 #endif
                 Task { @MainActor in
                     guard let self, !self.isShutDown else { return }
-                    self.handleApplicationTopologyChange(waking: name == NSWorkspace.didWakeNotification)
+                    switch name {
+                    case NSWorkspace.didLaunchApplicationNotification: self.handleApplicationLaunch(launched)
+                    case NSWorkspace.didTerminateApplicationNotification: self.handleApplicationTermination(processIdentifier: quitPID)
+                    default: self.handleApplicationTopologyChange(waking: name == NSWorkspace.didWakeNotification)
+                    }
                 }
             })
         }
@@ -3368,9 +3403,29 @@ final class BetterTileModel {
         watchdogTimer = timer
     }
 
+    /// A launched application's first window usually exists before its
+    /// observer is installed, so no creation notification follows, and the
+    /// launch sweep is the only prompt read. That sweep can omit the window: the
+    /// window server can list it as not on screen yet. Launch discovery then
+    /// reads that one application again, on a bounded schedule, until its first
+    /// ordinary window shows. See `LaunchDiscoverySchedule`.
+    func handleApplicationLaunch(_ launch: LaunchedApplication?) {
+        refreshApplicationTopology(retiring: launch?.processIdentifier)
+        guard let launch, launch.isManaged else { return }
+        startLaunchDiscovery(launch.processIdentifier)
+    }
+
+    /// Retires only the quitting process's arrivals and discovery. Arrivals and
+    /// discoveries of other applications keep their own deadlines.
+    func handleApplicationTermination(processIdentifier: Int32?) {
+        refreshApplicationTopology(retiring: processIdentifier)
+    }
+
+    /// Wake, and any topology change without a process, starts over: every
+    /// pending arrival and launch discovery ends, and the forced refresh (after
+    /// a wake, the display hold's own sweeps) reads every application again.
     func handleApplicationTopologyChange(waking: Bool = false) {
         guard !isShutDown else { return }
-        savedLayoutInventoryRevision &+= 1
         if waking {
             handleDisplayChange(.wake)
             dragSnap.cancel()
@@ -3380,10 +3435,222 @@ final class BetterTileModel {
         tracePendingArrivals("arrival_dropped", reason: "application_topology_refresh")
         #endif
         if !isHoldingDisplayChange { pendingWindowArrivals.removeAll() }
+        for pid in Array(launchDiscoveries.keys) { endLaunchDiscovery(pid, reason: "topology_reset") }
+        refreshApplicationTopologyNow()
+    }
+
+    private func refreshApplicationTopology(retiring processIdentifier: Int32?) {
+        guard !isShutDown else { return }
+        if let processIdentifier {
+            pendingWindowArrivals.removeAll { $0.processIdentifier == processIdentifier }
+            endLaunchDiscovery(processIdentifier, reason: "application_launched_or_quit")
+        }
+        refreshApplicationTopologyNow()
+        // The forced refresh does not discharge arrivals; their own passes continue.
+        if !pendingWindowArrivals.isEmpty, !isHoldingDisplayChange {
+            pendingWindowEvents.recordTopologyChange()
+            schedulePendingWindowEvents()
+        }
+    }
+
+    private func refreshApplicationTopologyNow() {
+        savedLayoutInventoryRevision &+= 1
         system.refreshApplicationObservers()
         dividerResize.hideAndCancel()
         refreshActiveWindows(force: true)
         refreshPaneApplicationWindowChoices()
+    }
+
+    private struct LaunchDiscovery {
+        /// Scheduled turns so far, deferred ones included. Bounds the schedule.
+        var turns = 0
+        /// Reads of the application so far, scheduled and focus-requested.
+        var reads = 0
+        /// Reads that a focus change requested. They do not use up scheduled turns.
+        var focusReads = 0
+        var lastFocusRead: BetterTileClock.Instant?
+        var task: Task<Void, Never>?
+        var focusTask: Task<Void, Never>?
+    }
+    private var launchDiscoveries: [Int32: LaunchDiscovery] = [:]
+    var hasLaunchDiscovery: Bool { !launchDiscoveries.isEmpty }
+
+    private var placesNewWindows: Bool {
+        sessionStore.sessions.values.contains { $0.mode == .bento || $0.mode == .tabbed }
+    }
+
+    private nonisolated static func isOrdinary(_ window: WindowSnapshot) -> Bool { window.isEligible && !window.isFloating }
+
+    private func startLaunchDiscovery(_ pid: Int32) {
+        guard !isShutDown, hasAccessibilityPermission, placesNewWindows,
+              system is any LaunchedApplicationReading, launchDiscoveries[pid] == nil,
+              // The launch sweep just recorded these windows.
+              !observedRuleWindows.contains(where: { $0.processIdentifier == pid && Self.isOrdinary($0) })
+        else { return }
+        #if DEBUG
+        arrivalTrace.record("launch_discovery_started", pid: pid, reason: "application_launch_sweep_omitted_window")
+        #endif
+        launchDiscoveries[pid] = LaunchDiscovery()
+        scheduleLaunchDiscovery(pid, after: LaunchDiscoverySchedule.delay(beforeTurn: 0))
+    }
+
+    private func scheduleLaunchDiscovery(_ pid: Int32, after delay: Duration?) {
+        guard var discovery = launchDiscoveries[pid] else { return }
+        guard let delay else { endLaunchDiscovery(pid, reason: "bound_reached"); return }
+        discovery.task?.cancel()
+        let clock = clock
+        discovery.task = Task { @MainActor [weak self] in
+            try? await clock.sleep(for: delay)
+            guard !Task.isCancelled, let self else { return }
+            self.launchDiscoveries[pid]?.task = nil
+            self.launchDiscoveries[pid]?.turns += 1
+            guard self.launchDiscoveryRead(pid) else { return }
+            self.scheduleLaunchDiscovery(pid, after: LaunchDiscoverySchedule.delay(beforeTurn: self.launchDiscoveries[pid]?.turns ?? .max))
+        }
+        launchDiscoveries[pid] = discovery
+    }
+
+    /// A focus change of the application can mean that its window just showed.
+    /// Such reads are coalesced, at most one per `LaunchDiscoverySchedule.focusReadInterval`
+    /// and `focusReadLimit` in all, and leave the scheduled turns untouched.
+    private func requestLaunchDiscoveryFocusRead(_ pid: Int32) {
+        guard var discovery = launchDiscoveries[pid], discovery.focusTask == nil,
+              discovery.focusReads < LaunchDiscoverySchedule.focusReadLimit else { return }
+        let clock = clock
+        let earliest = discovery.lastFocusRead.map { $0.advanced(by: LaunchDiscoverySchedule.focusReadInterval) }
+        let delay = earliest.map { max(.zero, clock.now.duration(to: $0)) } ?? .zero
+        discovery.focusTask = Task { @MainActor [weak self] in
+            if delay > .zero { try? await clock.sleep(for: delay) } else { await Task.yield() }
+            guard !Task.isCancelled, let self, self.launchDiscoveries[pid] != nil else { return }
+            self.launchDiscoveries[pid]?.focusTask = nil
+            self.launchDiscoveries[pid]?.focusReads += 1
+            self.launchDiscoveries[pid]?.lastFocusRead = clock.now
+            self.launchDiscoveryRead(pid, isScheduled: false)
+        }
+        launchDiscoveries[pid] = discovery
+    }
+
+    private func endLaunchDiscovery(_ pid: Int32, reason: String) {
+        guard let discovery = launchDiscoveries.removeValue(forKey: pid) else { return }
+        discovery.task?.cancel()
+        discovery.focusTask?.cancel()
+        #if DEBUG
+        arrivalTrace.record("launch_discovery_ended", pid: pid, outcome: "\(discovery.reads)_reads", reason: reason)
+        #endif
+    }
+
+    /// One discovery read of the application, unless something defers it.
+    /// - Parameter isScheduled: Only a scheduled turn may ask for a complete
+    ///   inventory, so one launch without exact identities causes at most one
+    ///   such inventory per scheduled turn (`LaunchDiscoverySchedule.delays`).
+    /// - Returns: Whether discovery continues.
+    @discardableResult
+    func launchDiscoveryRead(_ pid: Int32, isScheduled: Bool = true) -> Bool {
+        guard launchDiscoveries[pid] != nil else { return false }
+        guard !isShutDown, hasAccessibilityPermission, placesNewWindows,
+              let reader = system as? any LaunchedApplicationReading else {
+            endLaunchDiscovery(pid, reason: "not_placing_windows")
+            return false
+        }
+        // What defers the event pass defers the read, and so does Saved Layout
+        // Apply; their own sweeps observe the window. A pending creation of this
+        // application owns its window until its own readiness deadline.
+        guard !defersWindowEventWork, savedLayoutApplier?.ownedDisplayID == nil,
+              !pendingWindowArrivals.contains(where: { $0.processIdentifier == pid }) else { return true }
+        launchDiscoveries[pid]?.reads += 1
+        let result = reader.readLaunchedApplication(processIdentifier: pid)
+        #if DEBUG
+        arrivalTrace.record("launch_discovery_read", pid: pid, outcome: {
+            switch result {
+            case .windows: "windows"; case .notReady: "not_ready"; case .unavailable: "unavailable"
+            case .needsCompleteInventory: "needs_complete_inventory"
+            }
+        }())
+        #endif
+        switch result {
+        case .unavailable:
+            endLaunchDiscovery(pid, reason: "application_unavailable")
+            return false
+        case .notReady:
+            return true
+        case .needsCompleteInventory:
+            // Without an exact identity the read places nothing. The inventory's ordinary
+            // filter decides, and ends discovery when it sees the window.
+            if isScheduled { requestCompleteInventoryForDiscovery() }
+            return true
+        case let .windows(windows):
+            // Decided by each window's current state: a window first read as
+            // floating or not yet eligible counts once it is ordinary.
+            let ordinary = windows.filter { Self.isOrdinary($0) }
+            guard !ordinary.isEmpty else { return true }
+            placeDiscoveredWindows(ordinary)
+            return launchDiscoveries[pid] != nil
+        }
+    }
+
+    /// A gesture, a display hold or a Space change defers window-event passes
+    /// and launch discovery reads alike.
+    private var isWindowGestureActive: Bool {
+        activeBentoDrag != nil || dragSnap.isGestureActive || dividerResize.isDragging
+    }
+
+    private var defersWindowEventWork: Bool {
+        isWindowGestureActive || isStabilizingSpace || isHoldingDisplayChange
+    }
+
+    /// Hands discovery's window to a complete inventory: the arrival delay, as
+    /// for a created arrival, unless a failed inventory's backoff owns the retry.
+    /// A request while a topology pass is queued joins that pass.
+    private func requestCompleteInventoryForDiscovery() {
+        pendingWindowEvents.recordTopologyChange()
+        let backoff = windowEventRetryBackoff.delay
+        schedulePendingWindowEvents(after: backoff > WindowEventRetryBackoff.initialDelay ? backoff : .milliseconds(8))
+    }
+
+    /// The conditions under which a window read on its own may join the last
+    /// complete inventory. Otherwise peers' cached frames can be stale, for
+    /// example a native snap whose frame event is still queued, and the
+    /// window must go through a complete inventory. Created-window reads and
+    /// launch discovery share them.
+    private var canPlaceFromCachedRead: Bool {
+        pendingWindowEvents.frameEventWindowIDs.isEmpty && !pendingBentoFocusCheck
+            && pendingRestoredWindowDeadlines.isEmpty && applicationRecoveryPendingWindows.isEmpty
+            && applicationRecoveryFrameEventPIDs.isEmpty && system.unresponsiveApplicationRecoveryDeadlines.isEmpty
+            && windowEventRetryBackoff.delay == WindowEventRetryBackoff.initialDelay
+    }
+
+    /// Places a launched application's window from its own read, as a created
+    /// window's targeted read does, then lets one complete inventory validate it.
+    /// When the cache may be stale, a complete inventory places it instead, after
+    /// the queued frame events are classified, and ends discovery when it sees it.
+    private func placeDiscoveredWindows(_ windows: [WindowSnapshot]) {
+        guard canPlaceFromCachedRead, let reader = system as? any CreatedWindowReading,
+              let merged = reader.cachedVisibleWindows(adding: windows) else {
+            #if DEBUG
+            for window in windows { arrivalTrace.record("launch_discovery_deferred_to_inventory", pid: window.processIdentifier,
+                windowID: window.id, reason: canPlaceFromCachedRead ? "cache_unavailable" : "pending_events_or_recovery") }
+            #endif
+            requestCompleteInventoryForDiscovery()
+            return
+        }
+        recordObservedWindows(merged, observation: system.nativeDesktopObservation())
+        do {
+            placesCreatedWindowsInThisTurn = true
+            defer { placesCreatedWindowsInThisTurn = false }
+            refreshActiveWindows(force: false, windows: merged)
+        }
+        pendingWindowEvents.recordTopologyChange()
+        schedulePendingWindowEvents()
+    }
+
+    /// Any read that shows the application's first ordinary window ends its discovery.
+    private func endLaunchDiscoveries(satisfiedBy windows: [WindowSnapshot]) {
+        guard !launchDiscoveries.isEmpty else { return }
+        for pid in Array(launchDiscoveries.keys) where windows.contains(where: {
+            $0.processIdentifier == pid && Self.isOrdinary($0)
+        }) {
+            endLaunchDiscovery(pid, reason: "window_observed")
+        }
     }
 
     private var displayChangeWorkspaceIsActive = true
@@ -4299,6 +4566,12 @@ final class BetterTileModel {
             savedLayoutInventoryRevision &+= 1
         case .moved, .resized: break
         }
+        if launchDiscoveries[event.processIdentifier] != nil {
+            // A creation keeps its own arrival, token, deadline and targeted read; discovery
+            // defers to it and continues afterwards, because the created window can be a
+            // splash or panel while the ordinary window was built before the observer.
+            if event.kind == .focused { requestLaunchDiscoveryFocusRead(event.processIdentifier) }
+        }
         receiveApplicationRequestLifecycle(event)
         if event.kind == .focused { receivePaneApplicationFocus(event) }
         // Resolve the focus now, while it is still on that window. A later
@@ -4475,10 +4748,7 @@ final class BetterTileModel {
         guard let reader = system as? any CreatedWindowReading,
               !pendingWindowArrivals.isEmpty,
               pendingWindowArrivals.allSatisfy({ $0.creationToken != nil && !$0.hasMultipleUnknownCreations }),
-              pendingWindowEvents.frameEventWindowIDs.isEmpty, !pendingBentoFocusCheck,
-              pendingRestoredWindowDeadlines.isEmpty, applicationRecoveryPendingWindows.isEmpty,
-              applicationRecoveryFrameEventPIDs.isEmpty, system.unresponsiveApplicationRecoveryDeadlines.isEmpty,
-              windowEventRetryBackoff.delay == WindowEventRetryBackoff.initialDelay
+              canPlaceFromCachedRead
         else { return false }
         let now = windowArrivalNow()
         var read: [(index: Int, window: WindowSnapshot)] = []
@@ -4566,12 +4836,12 @@ final class BetterTileModel {
         let delay: Duration = expeditesArrival ? .zero
             : requestedDelay ?? (pendingWindowArrivals.isEmpty ? WindowEventRetryBackoff.initialDelay : arrivalDelay)
         guard !isShutDown else { return }
-        let isGestureActive = activeBentoDrag != nil || dragSnap.isGestureActive || dividerResize.isDragging
         #if DEBUG
-        if isGestureActive || isStabilizingSpace { tracePendingArrivals("arrival_deferred", reason: isGestureActive ? "drag" : "space_stabilization") }
+        if isWindowGestureActive || isStabilizingSpace {
+            tracePendingArrivals("arrival_deferred", reason: isWindowGestureActive ? "drag" : "space_stabilization")
+        }
         #endif
-        guard !isGestureActive, !isStabilizingSpace, !isHoldingDisplayChange,
-              !pendingWindowEvents.isEmpty || pendingBentoFocusCheck else { return }
+        guard !defersWindowEventWork, !pendingWindowEvents.isEmpty || pendingBentoFocusCheck else { return }
         // Frame traffic must not postpone an already queued window arrival.
         if windowEventTask != nil, windowEventTaskIncludesTopology,
            !expeditesArrival || windowEventTaskIsImmediate {
@@ -4604,9 +4874,7 @@ final class BetterTileModel {
 
     func processPendingWindowEvents(windows suppliedWindows: [WindowSnapshot]? = nil, forceRefresh: Bool = false) {
         if savedLayoutApplier?.ownedDisplayID != nil { return }
-        let isGestureActive = activeBentoDrag != nil || dragSnap.isGestureActive || dividerResize.isDragging
-        guard !isGestureActive, !isStabilizingSpace, !isHoldingDisplayChange,
-              !pendingWindowEvents.isEmpty || pendingBentoFocusCheck else { return }
+        guard !defersWindowEventWork, !pendingWindowEvents.isEmpty || pendingBentoFocusCheck else { return }
         if suppliedWindows == nil, !forceRefresh, placeCreatedWindowsFromTargetedReads() { return }
         let priorRecoveryGeneration = applicationRecoveryGeneration
         if applicationRecoveryGeneration == nil,
@@ -5526,6 +5794,7 @@ final class BetterTileModel {
         if let previous = savedLayoutWindowLocations, previous != next { savedLayoutInventoryRevision &+= 1 }
         savedLayoutWindowLocations = next
         if observedRuleWindows != windows { observedRuleWindows = windows }
+        endLaunchDiscoveries(satisfiedBy: windows)
     }
     /// Snapshots already read by normal reconciliation. Settings never polls AX.
     private(set) var observedRuleWindows: [WindowSnapshot] = [] {

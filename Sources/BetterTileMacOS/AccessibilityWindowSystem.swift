@@ -5,7 +5,7 @@ import os
 import Synchronization
 
 @MainActor
-public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventSource, CreatedWindowReading {
+public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventSource, CreatedWindowReading, LaunchedApplicationReading {
     private static let signposter = OSSignposter(
         subsystem: "com.lmckarma.BetterTile",
         category: "Accessibility"
@@ -476,6 +476,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         )
         let applications = prepared.applications
         let previousHolds = prepared.previousHolds
+        var lateOnScreen: [(candidate: LateOnScreenRecheck.Candidate, element: AXUIElement)] = []
         unreadableApplicationHolds = ApplicationInventorySweep.run(
             applications,
             processIdentifier: \.processIdentifier,
@@ -508,18 +509,43 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
                     bundleIdentifier: application.bundleIdentifier,
                     displays: availableDisplays
                 ) else { continue }
+                let isFirstSeen = metadata.knownSnapshots[snapshot.id] == nil
                 metadata.knownSnapshots[snapshot.id] = snapshot
                 if let windowServer,
                    !windowServer.contains(
                        snapshot,
                        exactWindowID: identities.exactWindowID(for: snapshot.id)
-                   ) { continue }
+                   ) {
+                    // Only an exact identity can be re-checked; without one, the next sweep decides.
+                    if isFirstSeen, let exactID = identities.exactWindowID(for: snapshot.id) {
+                        lateOnScreen.append((LateOnScreenRecheck.Candidate(snapshot: snapshot, exactWindowID: exactID), window))
+                    }
+                    #if DEBUG
+                    if ArrivalTrace.shared.isEnabled {
+                        let exactID = identities.exactWindowID(for: snapshot.id)
+                        ArrivalTrace.shared.disposition("inventory_omitted", windowID: snapshot.id, reason: exactID.map {
+                            windowServer.containsIdentity($0, processIdentifier: snapshot.processIdentifier)
+                                ? "window_server_not_on_screen" : "window_server_no_record"
+                        } ?? "window_server_no_matching_frame")
+                    }
+                    #endif
+                    continue
+                }
                 snapshots.append(snapshot)
                 refreshedElements[snapshot.id] = window
                 if metadata.managedWindowIDs.contains(snapshot.id) || metadata.recentWindowIDs.contains(snapshot.id) {
                     registerWindowNotifications(window, snapshot: snapshot)
                 }
             }
+        }
+        let admittedLate = LateOnScreenRecheck.admitted(lateOnScreen.map(\.candidate)) { targetedWindowServerIndex(ids: $0) }
+        for entry in lateOnScreen where admittedLate.contains(entry.candidate.snapshot.id) {
+            #if DEBUG
+            ArrivalTrace.shared.disposition("inventory_recheck_admitted", windowID: entry.candidate.snapshot.id,
+                reason: "window_server_on_screen_after_read")
+            #endif
+            snapshots.append(entry.candidate.snapshot)
+            refreshedElements[entry.candidate.snapshot.id] = entry.element
         }
         let retainedIDs = metadata.managedWindowIDs.union(metadata.recentWindowIDs).union(metadata.minimizedWindowIDs)
         elements = elements.filter { retainedIDs.contains($0.key) }
@@ -553,6 +579,13 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         let classified = nativeDesktopObservation()?.windowsOnCurrentSpaces(sorted) ?? sorted
         snapshotCache.recordFullSweep(classified)
         let returnedIDs = Set(classified.map(\.id))
+        #if DEBUG
+        if ArrivalTrace.shared.isEnabled {
+            for snapshot in sorted where !returnedIDs.contains(snapshot.id) {
+                ArrivalTrace.shared.disposition("inventory_omitted", windowID: snapshot.id, reason: "not_on_current_space")
+            }
+        }
+        #endif
         unreadOnScreenWindowIDs = windowServer.map { index in
             Set(identities.records.values.compactMap { record in
                 guard !returnedIDs.contains(record.windowID),
@@ -665,6 +698,62 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         creationElements.removeValue(forKey: token)
         guard let observation = refreshNativeDesktopObservation() else { return .window(window) }
         return observation.windowsOnCurrentSpaces([window]).first.map(CreatedWindowRead.window) ?? .unavailable
+    }
+
+    /// Reads one launched application's windows: its Accessibility window list,
+    /// one targeted WindowServer read for their exact identities, and Space
+    /// membership from the existing native observation. A window without an
+    /// exact identity is never placed from this read: an ordinary one asks for
+    /// a complete inventory instead. It sends no Accessibility message to any
+    /// other application. It also retries the application's observer and its
+    /// window-creation registration when either failed at launch, so that a
+    /// later window can announce itself.
+    public func readLaunchedApplication(processIdentifier pid: Int32) -> LaunchedApplicationRead {
+        guard (try? ensurePermission()) != nil,
+              let running = runningApplicationLookup(pid), !running.isTerminated,
+              Self.shouldManageApplication(processIdentifier: pid, ownProcessIdentifier: getpid(),
+                  activationPolicy: running.activationPolicy, isHidden: running.isHidden, includeHidden: false),
+              !Self.isUnresponsive(pid)
+        else { return .unavailable }
+        let application = targetedReadApplication(forPID: pid)
+        ensureApplicationObservation(pid)
+        let appElement = makeApplicationElement(pid: pid)
+        guard let elements: [AXUIElement] = value(kAXWindowsAttribute, from: appElement) else {
+            return Self.isUnresponsive(pid) ? .unavailable : .notReady
+        }
+        let availableDisplays = displays()
+        let snapshots = elements.compactMap {
+            snapshot($0, application: application.instance, bundleIdentifier: application.bundleIdentifier,
+                     displays: availableDisplays)
+        }
+        let exactIDs = Dictionary(uniqueKeysWithValues: snapshots.compactMap { snapshot in
+            identities.exactWindowID(for: snapshot.id).map { (snapshot.id, $0) }
+        })
+        let visibility = LaunchedWindowVisibility.classify(snapshots, processIdentifier: pid, exactIDs: exactIDs) {
+            targetedWindowServerRecords(ids: $0)
+        }
+        for id in visibility.provisionalFloatingIDs { metadata.popupVerdicts[id] = nil }
+        let shown = visibility.shown
+        // Without an exact identity, the complete inventory's frame filter decides.
+        let unresolved: LaunchedApplicationRead = visibility.hasUnidentifiedWindow ? .needsCompleteInventory : .notReady
+        guard shown.contains(where: { $0.isEligible && !$0.isFloating }) else { return unresolved }
+        let classified = refreshNativeDesktopObservation()?.windowsOnCurrentSpaces(shown) ?? shown
+        return classified.isEmpty ? unresolved : .windows(classified)
+    }
+
+    /// Installs a missing observer, or registers a missing application-level
+    /// notification again. A registration can fail while an application is
+    /// still starting, and nothing else retries it.
+    private func ensureApplicationObservation(_ pid: pid_t) {
+        guard let observer = observers[pid] else {
+            if launchRecords[pid] != nil { installObserver(for: pid) }
+            return
+        }
+        let application = makeApplicationElement(pid: pid)
+        let registered = Set(registrations[pid, default: []].filter { $0.windowID == nil }.map(\.notification))
+        for notification in ApplicationObservationRepair.missing(registered: registered) {
+            register(notification, element: application, observer: observer, pid: pid)
+        }
     }
 
     public func cachedVisibleWindows(adding windows: [WindowSnapshot]) -> [WindowSnapshot]? {
@@ -1712,8 +1801,9 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         observationLifetime.install(applicationInstance)
         CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .commonModes)
         let application = makeApplicationElement(pid: pid)
-        register(kAXWindowCreatedNotification, element: application, observer: observer, pid: pid)
-        register(kAXFocusedWindowChangedNotification, element: application, observer: observer, pid: pid)
+        for notification in ApplicationObservationRepair.applicationNotifications {
+            register(notification, element: application, observer: observer, pid: pid)
+        }
     }
 
     private func registerWindowNotifications(
@@ -2508,7 +2598,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         (value as? NSNumber).map(CGFloat.init(truncating:))
     }
 
-    nonisolated static func shouldManageApplication(
+    public nonisolated static func shouldManageApplication(
         processIdentifier: pid_t,
         ownProcessIdentifier: pid_t,
         activationPolicy: NSApplication.ActivationPolicy,

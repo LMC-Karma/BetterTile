@@ -650,6 +650,51 @@ stabilization still defer discovery. Frame classification reuses its inventory
 for arrival reconciliation only when it attempted no mutation. A mutation
 attempt requires a new inventory before reconciliation.
 
+A launched application's first window usually exists before the application's
+observer is installed, so it sends no creation callback, and the sweep after
+`NSWorkspace.didLaunchApplicationNotification` is its only prompt read. That
+sweep reads the window-server list before it reads applications through
+Accessibility, so a window that the application shows during the sweep is
+readable but not on screen in that list. The sweep therefore checks windows
+that it sees for the first time once more after the Accessibility reads
+(`LateOnScreenRecheck`), with one targeted window-server read of their exact
+IDs. A window without an exact ID is never admitted by this check; the next
+complete sweep's frame filter decides it. If the launch sweep still returns no
+ordinary window of a regular, visible, launched application, and a display
+shows Adaptive or Tabbed, launch discovery reads that one application
+(`LaunchedApplicationReading`, `LaunchedWindowVisibility`): its window list,
+one targeted window-server read of their exact IDs, and its Space membership.
+It never takes a complete inventory itself, and it never places a window that
+it cannot identify by exact ID. Without exact IDs (private APIs disabled, or a
+failed ID call), a scheduled turn that reads an ordinary window of the
+application hands it to a complete inventory instead, at the arrival delay or
+the active backoff, where the sweep's frame filter decides it. Focus-requested
+reads never hand off, so one launch makes at most 16 such handoff requests,
+one per scheduled turn, and none after discovery ends. A pass that the last
+request queued, and the ordinary retries of a failed inventory, can still run
+after that. With exact IDs none of this applies. An early floating verdict is
+provisional, as for a created window's read. Turns follow
+`LaunchDiscoverySchedule`: 7 in the first 0.5 s, then 9 more that back off to
+one a second, 16 in all over about 6 s. A focus change of that application
+asks for an extra read; these are coalesced, at least 100 ms apart and at most
+8, and do not use up scheduled turns. A window counts by its current state, so
+a window first read as floating or not yet eligible counts once it is ordinary.
+Placement from a discovery read uses the same conditions as a created window's
+targeted read (`canPlaceFromCachedRead`): with pending frame events, a focus
+check, restore readiness, recovery work, an unresponsive application or a
+failed-inventory backoff, a complete inventory places the window instead,
+after the queued frame events are classified. Discovery ends when a read or any
+inventory shows the application's first ordinary window, when the application
+quits or stops responding, when no display places new windows, or at the
+bound. A creation callback of the application does not end it: the creation
+keeps its own arrival, token, deadline and targeted read, and discovery skips
+its reads while that arrival is pending, because the created window can be a
+splash or panel while the ordinary window was built earlier. Gestures, display
+holds, Space stabilization and Saved Layout Apply defer its reads. A launch or
+a termination retires only that process's pending arrivals and discovery; a
+wake still clears all of them. Each discovery read also retries the
+application's observer and its application-level registrations if they failed.
+
 A Space change suspends an active window drag instead of cancelling it (see
 Window drag drops). The suspended gesture still counts as active, so event
 passes and arrival discovery stay deferred until the gesture ends. Every
@@ -1012,9 +1057,9 @@ timeout for each hang.
   both show that it runs again. A window that the application announces with a
   registered notification therefore does not wait for the end of a long
   backoff. A failed application-level registration, such as the window
-  creation notification registered when the observer is installed, is not
-  retried. For such an application the fallback is an activation, a completed
-  call, or the end of the backoff. A failed per-window registration of a
+  creation notification registered when the observer is installed, is retried
+  only by launch discovery reads of that application. Otherwise the fallback
+  is an activation, a completed call, or the end of the backoff. A failed per-window registration of a
   managed or recent window, such as its destroyed notification, is retried by
   the next sweep that reads the application.
 

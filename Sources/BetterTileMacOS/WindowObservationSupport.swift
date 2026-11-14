@@ -282,6 +282,83 @@ struct WindowServerIndex {
     }
 }
 
+/// A complete sweep reads the window-server list before it reads applications
+/// through Accessibility. An application that shows a window during the sweep,
+/// as a just-launched application does, can list that window through
+/// Accessibility while the earlier list still has it off screen or not at all.
+/// The sweep checks such windows once more after the Accessibility reads, with
+/// one targeted read of their exact identities. Only windows that the sweep
+/// sees for the first time qualify, so a window that stays off screen (on
+/// another Space, or a background tab) costs one extra check in its life, not
+/// one in every sweep. A window without an exact identity cannot be a
+/// candidate: the frame filter of the next complete sweep decides it.
+enum LateOnScreenRecheck {
+    struct Candidate: Equatable {
+        var snapshot: WindowSnapshot
+        var exactWindowID: CGWindowID
+    }
+
+    /// The candidates whose exact identity the targeted read shows on screen at
+    /// the normal layer, for their own process. `read` runs at most once, and
+    /// not at all without candidates.
+    static func admitted(_ candidates: [Candidate], read: (Set<CGWindowID>) -> WindowServerIndex?) -> Set<WindowID> {
+        guard !candidates.isEmpty, let index = read(Set(candidates.map(\.exactWindowID))) else { return [] }
+        return Set(candidates.filter {
+            index.isOnScreen($0.exactWindowID, processIdentifier: $0.snapshot.processIdentifier)
+        }.map(\.snapshot.id))
+    }
+}
+
+/// Which windows of one launched application are shown now, from its own
+/// Accessibility snapshots and one targeted window-server read of their exact
+/// identities. A window above the normal layer is shown as floating, like the
+/// complete inventory classifies it. A window without an exact identity is
+/// never shown by this read; an ordinary one is reported so that discovery
+/// hands it to a complete inventory, whose frame filter decides it. A floating verdict this early is provisional: the window can still be
+/// building its subrole and buttons, so its cached popup verdict is cleared,
+/// as a created window's read does.
+enum LaunchedWindowVisibility {
+    struct Result: Equatable {
+        var shown: [WindowSnapshot]
+        var provisionalFloatingIDs: Set<WindowID>
+        /// An ordinary-looking window that this read cannot identify by exact identity.
+        var hasUnidentifiedWindow = false
+    }
+
+    static func classify(_ snapshots: [WindowSnapshot], processIdentifier pid: pid_t, exactIDs: [WindowID: CGWindowID],
+                         read: (Set<CGWindowID>) -> [WindowServerRecord]?) -> Result {
+        var shown: [WindowSnapshot] = []
+        let exact = snapshots.filter { exactIDs[$0.id] != nil }
+        if !exact.isEmpty, let records = read(Set(exact.compactMap { exactIDs[$0.id] })) {
+            let index = WindowServerIndex(records: records)
+            for snapshot in exact {
+                guard let exactID = exactIDs[snapshot.id] else { continue }
+                if let record = records.first(where: { $0.windowID == exactID }),
+                   record.processIdentifier == pid, record.layer != 0, record.isOnscreen {
+                    var floating = snapshot
+                    floating.isFloating = true
+                    shown.append(floating)
+                } else if index.contains(snapshot, exactWindowID: exactID) {
+                    shown.append(snapshot)
+                }
+            }
+        }
+        return Result(shown: shown, provisionalFloatingIDs: Set(snapshots.filter(\.isFloating).map(\.id)),
+                      hasUnidentifiedWindow: snapshots.contains { exactIDs[$0.id] == nil && $0.isEligible && !$0.isFloating })
+    }
+}
+
+/// The application-level notifications that every observer registers. A
+/// registration can fail while an application is still starting; discovery
+/// reads register the missing ones again.
+enum ApplicationObservationRepair {
+    static let applicationNotifications = [kAXWindowCreatedNotification, kAXFocusedWindowChangedNotification]
+
+    static func missing(registered: Set<String>) -> [String] {
+        applicationNotifications.filter { !registered.contains($0) }
+    }
+}
+
 /// Closure evidence for the known windows of applications that a sweep did not
 /// read, because they were held or kept. Accessibility gives no evidence for
 /// them, so only the full WindowServer list, which includes other Spaces and

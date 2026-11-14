@@ -342,6 +342,30 @@ public protocol CreatedWindowReading: AnyObject {
     func cachedVisibleWindows(adding windows: [WindowSnapshot]) -> [WindowSnapshot]?
 }
 
+/// The result of reading one launched application's windows.
+public enum LaunchedApplicationRead: Sendable, Equatable {
+    /// The windows of the application that are on screen on a current Space,
+    /// classified as a complete inventory would classify them.
+    case windows([WindowSnapshot])
+    /// The application answers, but shows no window on a current Space yet.
+    case notReady
+    /// The application has an ordinary window that this read cannot identify
+    /// by exact identity. A complete inventory's frame filter decides it.
+    case needsCompleteInventory
+    /// The application quit, is not one that BetterTile manages (not a regular
+    /// application, hidden, or BetterTile itself), is held as unresponsive, or
+    /// permission is missing. Reading it again will not help.
+    case unavailable
+}
+
+/// Reads the windows of one application, without a complete inventory. Launch
+/// discovery uses it for an application whose first window the launch sweep did
+/// not return.
+@MainActor
+public protocol LaunchedApplicationReading: AnyObject {
+    func readLaunchedApplication(processIdentifier: Int32) -> LaunchedApplicationRead
+}
+
 /// Optional event capability implemented by real and deterministic fake window
 /// systems. Keeping it separate preserves simple WindowSystem adapters.
 @MainActor

@@ -86,6 +86,15 @@ windows look correct.
   or as a hidden tab when the pane shows the focused window. Repair
   Tabbed returns the windows Tabbed floated on its own and keeps the windows
   you floated.
+- For launch discovery, launch an application in Adaptive and in Tabbed whose
+  first window the launch sweep omits; with `-BetterTileArrivalTrace YES` the
+  Debug trace logs `launch_discovery_started`. Its window must join within a
+  few hundred milliseconds of showing, including when it shows 1 s or 3 s after
+  launch with no creation callback. Also check a creation callback during
+  discovery, another launch or a helper quitting during discovery, a menu-bar
+  application, a background helper and a hidden launch (these start no
+  discovery), and an application that never shows a window: nothing more is
+  read after about 6 s.
 - For a hung application, put a window of a test application, such as
   TextEdit, in a Bento layout. Stop it with `kill -STOP <pid>`. Drag dividers
   next to its pane, snap other windows, and drag windows by their title bars.
