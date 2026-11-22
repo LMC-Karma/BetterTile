@@ -228,6 +228,9 @@ func aFocusPeerWhoseApplicationDoesNotAnswerIsNamedAndReported(failure: FocusPee
     model.applicationNameForProcess = { $0.processIdentifier == 44 ? "Stopped Fixture" : nil }
     let notResponding = "Stopped Fixture is not responding, so its window did not come back. "
         + "Use Repair Layout when it responds."
+    // Under the "Use Repair Layout" title the detail does not repeat it.
+    let refusedNotResponding = "Stopped Fixture is not responding, so its window did not come back. "
+        + "Try again when it responds."
     // The application stops: every read of its window fails from now on,
     // and its calls wait out their timeouts, which holds it as unresponsive.
     system.unreadableAfterWrites[stuck] = 0
@@ -236,12 +239,12 @@ func aFocusPeerWhoseApplicationDoesNotAnswerIsNamedAndReported(failure: FocusPee
 
     model.perform(.restore)
     if failure == .refused {
-        #expect(model.lastActionFeedback == .failure(title: "Use Repair Layout", detail: notResponding),
+        #expect(model.lastActionFeedback == .failure(title: "Use Repair Layout", detail: refusedNotResponding),
                 "\(feedbackText(model))")
     }
     await settleFocusRestore(model, system: system)
     let restoreResult: ResultPillFeedback = failure == .refused
-        ? .failure(title: "Use Repair Layout", detail: notResponding)
+        ? .failure(title: "Use Repair Layout", detail: refusedNotResponding)
         : .layoutResult(title: "Layout partly restored", detail: notResponding, kind: .warning, actions: [])
     #expect(model.lastActionFeedback == restoreResult, "\(feedbackText(model))")
 
@@ -341,6 +344,69 @@ func aFocusPeerOnAnotherSpaceIsNotReported(fullScreen: Bool) async throws {
     #expect(model.applicationNameForProcess(.init(processIdentifier: current)) != nil)
 }
 
+/// The adapter holds a stalled application for only 2 s. A later sweep
+/// keeps it in inventory backoff without messaging it, and a targeted read
+/// of a peer whose element was dropped runs such a sweep, so it fails
+/// without a call and the hold is not renewed. The peer must still count as
+/// not answering, so Repair warns instead of reporting "Layout applied".
+@Test(.appTestApplication, .timeLimit(.minutes(5))) @MainActor
+func aStoppedPeerInInventoryBackoffIsReportedAfterItsCallHoldExpires() async throws {
+    let (system, model, stuck) = try await focusModeWithTwoPeers(modelsAdapterGate: true)
+    defer { model.shutdown() }
+    model.applicationNameForProcess = { $0.processIdentifier == 44 ? "Stopped Fixture" : nil }
+    // The application stops: each call to it waits out a 0.35 s timeout.
+    system.adapterInventoryTimeouts = [44: 0.35]
+    system.failedRestoreWindowIDs = [stuck]
+    model.perform(.restore)
+    #expect(model.lastActionFeedback == .failure(title: "Use Repair Layout", detail:
+        "Stopped Fixture is not responding, so its window did not come back. Try again when it responds."),
+        "\(feedbackText(model))")
+    await settleFocusRestore(model, system: system)
+
+    // A timed-out write dropped the element. Several stalls put the
+    // application in a long inventory backoff; the 2 s call hold then ends.
+    system.droppedElementWindowIDs = [stuck]
+    system.recordAdapterStalls(44, count: 3)
+    await system.advance(by: .milliseconds(2500))
+    _ = try system.visibleWindows()
+    try #require(!system.isApplicationUnresponsive(for: stuck))
+    try #require(system.unreadableApplicationWindowIDs.contains(stuck))
+
+    model.tileCurrentDisplay()
+    #expect(await system.waitFor(timeout: .seconds(6)) { model.lastActionFeedback?.message == repairPartial },
+            "\(feedbackText(model))")
+    #expect(model.lastActionFeedback == .layoutResult(title: repairPartial, detail:
+        "Stopped Fixture is not responding, so its window did not come back. Use Repair Layout when it responds.",
+        kind: .warning, actions: []), "\(feedbackText(model))")
+}
+
+/// An unreadable peer whose application still answers is not evidence of a
+/// stuck window, even when macOS refused its restore. Without a desktop
+/// observation, as with private APIs off, it may simply be on another Space.
+/// With an observation that places it on another Space, it leaves the record.
+@Test(.appTestApplication, .timeLimit(.minutes(5)), arguments: [false, true]) @MainActor
+func aRefusedUnreadablePeerOfAnAnsweringApplicationIsNotReported(observesDesktops: Bool) async throws {
+    let (system, model, stuck) = try await focusModeWithTwoPeers(observesDesktops: observesDesktops)
+    defer { model.shutdown() }
+    system.failedRestoreWindowIDs = [stuck]
+    if observesDesktops {
+        let other = NativeSpaceID(rawValue: 2)
+        system.simulatesNativeClassification = true
+        system.desktopObservation?.knownSpacesByDisplay[system.mainDisplay.id]?.insert(other)
+        system.desktopObservation?.windowMembership[stuck] = [other]
+    } else {
+        // The read cannot see the window, and nothing says why.
+        system.unreadableAfterWrites[stuck] = 0
+    }
+    model.perform(.restore)
+    #expect(model.lastActionFeedback == .success("Layout restored"), "\(feedbackText(model))")
+    await settleFocusRestore(model, system: system)
+    #expect(model.lastActionFeedback == .success("Layout restored"), "\(feedbackText(model))")
+    model.tileCurrentDisplay()
+    await settleFocusRestore(model, system: system)
+    #expect(model.lastActionFeedback?.kind == .success, "\(feedbackText(model))")
+}
+
 @Test func aNotRespondingFocusPeerMessageNamesTheApplication() {
     let message = { (names: [String], count: Int) in
         BetterTileModel.notRespondingFocusPeersMessage(names: names, windowCount: count)
@@ -351,10 +417,17 @@ func aFocusPeerOnAnotherSpaceIsNotReported(fullScreen: Bool) async throws {
         == "TextEdit is not responding, so its windows did not come back. Use Repair Layout when it responds.")
     #expect(message(["TextEdit", "Terminal"], 2) == "TextEdit and Terminal are not responding, "
         + "so their windows did not come back. Use Repair Layout when they respond.")
-    #expect(message(["A", "B", "C"], 3) == "A, B, and 1 more are not responding, "
+    #expect(message(["A", "B", "C"], 3) == "A, B, and 1 more app are not responding, "
+        + "so their windows did not come back. Use Repair Layout when they respond.")
+    #expect(message(["A", "B", "C", "D"], 4) == "A, B, and 2 more apps are not responding, "
         + "so their windows did not come back. Use Repair Layout when they respond.")
     #expect(message([], 1)
         == "An application is not responding, so its window did not come back. Use Repair Layout when it responds.")
+    #expect(BetterTileModel.notRespondingFocusPeersMessage(names: [], windowCount: 2, applicationCount: 2)
+        == "Some applications are not responding, so their windows did not come back. "
+            + "Use Repair Layout when they respond.")
+    #expect(BetterTileModel.notRespondingFocusPeersMessage(names: ["TextEdit"], windowCount: 1, remedy: .tryAgain)
+        == "TextEdit is not responding, so its window did not come back. Try again when it responds.")
 }
 
 @Test func anUnreturnedFocusPeerMessageNamesEachApplicationOnce() {
@@ -421,7 +494,7 @@ func aFocusPeerOnAnotherSpaceIsNotReported(fullScreen: Bool) async throws {
 /// and its two peers minimized. Returns the peer the test makes fail.
 /// - Parameter observesDesktops: Gives the desktop a Space, as Saved Layouts need.
 @MainActor private func focusModeWithTwoPeers(
-    observesDesktops: Bool = false
+    observesDesktops: Bool = false, modelsAdapterGate: Bool = false
 ) async throws -> (FakeAppWindowSystem, BetterTileModel, WindowID) {
     _ = NSApplication.shared
     let system = makeManualWindowSystem(drivingPolicyDeadlines: true)
@@ -429,6 +502,12 @@ func aFocusPeerOnAnotherSpaceIsNotReported(fullScreen: Bool) async throws {
         system.windows.append(WindowSnapshot(id: WindowID(rawValue: name.lowercased()),
             processIdentifier: Int32(43 + index), bundleIdentifier: name == "Stuck" ? stuckName : "com.example.\(name)",
             frame: BTRect(x: 0, y: 0, width: 200, height: 300), displayID: system.mainDisplay.id))
+    }
+    if modelsAdapterGate {
+        // Sweeps run the adapter's own inventory gate. Every application
+        // answers until a test gives one a timeout.
+        system.adapterInventoryTimeouts = [:]
+        system.adapterGateReportsUnresponsive = true
     }
     if observesDesktops {
         let space = NativeSpaceID(rawValue: 1)

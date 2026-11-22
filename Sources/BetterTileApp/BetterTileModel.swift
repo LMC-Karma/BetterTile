@@ -5458,15 +5458,18 @@ final class BetterTileModel {
             if !refused.isEmpty {
                 // A fixed title: an application name must not pick the
                 // title by keyword, as a free-form failure reason does.
-                var away = focusPeersAway(refused, sessionID: session.id, refused: true)
-                // macOS refused the request, so a peer this read cannot place
-                // still did not come back, unless it is on another Space.
-                if away.isEmpty { away.minimized = refused.subtracting(away.elsewhere) }
+                // An unreadable peer whose application still answers can be on
+                // another Space, and without a desktop observation nothing says
+                // so. Only a minimized or a not-answering peer is reported.
+                let away = focusPeersAway(refused, sessionID: session.id)
                 statusMessage = [
                     away.minimized.isEmpty ? nil : unreturnedFocusPeersMessage(away.minimized),
-                    away.notResponding.isEmpty ? nil : notRespondingFocusPeersMessage(away.notResponding),
+                    // The title already says "Use Repair Layout".
+                    away.notResponding.isEmpty ? nil
+                        : notRespondingFocusPeersMessage(away.notResponding, remedy: .tryAgain),
                 ].compactMap { $0 }.joined(separator: " ")
-                // A peer on another Space is not reported; Restore then succeeded.
+                // A peer that is not reported leaves Restore a success. It stays
+                // recorded, so Repair still tries it again.
                 guard statusMessage?.isEmpty == false else {
                     statusMessage = nil
                     lastBentoFocusMessage = "Layout restored"
@@ -5672,16 +5675,13 @@ final class BetterTileModel {
     /// - An unreadable peer is not responding only with direct evidence:
     ///   its application stopped answering Accessibility calls. It is away
     ///   while WindowServer does not show it on screen.
-    /// - Any other unreadable peer, for example one that closed, is not
-    ///   reported.
+    /// - Any other unreadable peer, for example one that closed or one on
+    ///   another Space without a desktop observation, is not reported, even
+    ///   when macOS refused its restore.
     ///
     /// Each application is read at most until it stops answering, so a hung
     /// application costs one timeout per check, not one per window.
-    /// - Parameter refused: True for peers whose restore macOS just refused.
-    ///   The refusal is evidence that such a peer did not come back.
-    private func focusPeersAway(
-        _ windowIDs: Set<WindowID>, sessionID: DesktopSessionID, refused: Bool = false
-    ) -> FocusPeersAway {
+    private func focusPeersAway(_ windowIDs: Set<WindowID>, sessionID: DesktopSessionID) -> FocusPeersAway {
         guard !windowIDs.isEmpty else { return FocusPeersAway() }
         var away = FocusPeersAway()
         away.elsewhere = focusPeersOnOtherSpaces(windowIDs)
@@ -5691,12 +5691,6 @@ final class BetterTileModel {
         guard !read.notAnswering.isEmpty else { return away }
         let presence = windowServerPresence(for: read.notAnswering) ?? [:]
         away.notResponding = read.notAnswering.filter { presence[$0]?.isOnScreen != true }
-        if refused {
-            // An unreadable peer whose application still answers: the
-            // refusal is the only evidence, so it did not come back.
-            let unread = windowIDs.subtracting(away.elsewhere).subtracting(read.snapshots.keys)
-            away.minimized.formUnion(unread.subtracting(read.notAnswering))
-        }
         return away
     }
 
@@ -5709,16 +5703,23 @@ final class BetterTileModel {
         var snapshots: [WindowID: WindowSnapshot] = [:]
         var notAnswering: Set<WindowID> = []
         var silent: Set<Int32> = []
+        // Evidence that an application does not answer: a call that waited
+        // out its timeout holds it for 2 s, and a sweep then keeps it in
+        // inventory backoff, up to 30 s, without messaging it. A targeted read
+        // during that backoff can fail without a call, so the hold alone
+        // could expire while the application is still stopped.
+        func isNotAnswering(_ id: WindowID) -> Bool {
+            system.isApplicationUnresponsive(for: id) || system.unreadableApplicationWindowIDs.contains(id)
+        }
         for id in windowIDs.sorted() {
             let process = unreturnedFocusPeerProcesses[id]?.processIdentifier
             if let process, silent.contains(process) { notAnswering.insert(id); continue }
-            if !system.isApplicationUnresponsive(for: id),
-               let snapshot = (try? system.windowSnapshots(ids: [id]))?.first {
+            if !isNotAnswering(id), let snapshot = (try? system.windowSnapshots(ids: [id]))?.first {
                 snapshots[id] = snapshot
                 continue
             }
-            // Only a call that waited out its timeout holds the application.
-            if system.isApplicationUnresponsive(for: id) {
+            // The read itself can time out or run a sweep that backs off.
+            if isNotAnswering(id) {
                 notAnswering.insert(id)
                 if let process { silent.insert(process) }
             }
@@ -5755,8 +5756,13 @@ final class BetterTileModel {
     /// Names the applications of peers that did not come back because they
     /// do not answer, such as "The TextEdit window did not come back.
     /// TextEdit is not responding."
-    private func notRespondingFocusPeersMessage(_ windowIDs: Set<WindowID>) -> String {
-        Self.notRespondingFocusPeersMessage(names: focusPeerApplicationNames(windowIDs), windowCount: windowIDs.count)
+    private func notRespondingFocusPeersMessage(
+        _ windowIDs: Set<WindowID>, remedy: NotRespondingRemedy = .repairLayout
+    ) -> String {
+        let processes = Set(windowIDs.compactMap { unreturnedFocusPeerProcesses[$0]?.processIdentifier })
+        return Self.notRespondingFocusPeersMessage(
+            names: focusPeerApplicationNames(windowIDs), windowCount: windowIDs.count,
+            applicationCount: processes.count, remedy: remedy)
     }
 
     /// Each application name once, in window order. The recorded process
@@ -5783,21 +5789,37 @@ final class BetterTileModel {
         return focusPeersSentence(names: names, windowCount: windowCount) { subject, _ in "\(subject) \(predicate)" }
     }
 
+    /// What a not-responding sentence tells the user to do.
+    enum NotRespondingRemedy: Sendable {
+        /// "Use Repair Layout when it responds."
+        case repairLayout
+        /// "Try again when it responds.", under a "Use Repair Layout" title.
+        case tryAgain
+    }
+
     /// Such as "TextEdit is not responding, so its window did not come back.
     /// Use Repair Layout when it responds."
-    nonisolated static func notRespondingFocusPeersMessage(names: [String], windowCount: Int) -> String {
+    /// - Parameter applicationCount: The number of applications, when known,
+    ///   for peers whose applications have no name.
+    nonisolated static func notRespondingFocusPeersMessage(
+        names: [String], windowCount: Int, applicationCount: Int = 0, remedy: NotRespondingRemedy = .repairLayout
+    ) -> String {
         let windows = windowCount == 1 ? "window" : "windows"
-        let several = names.count > 1
-        let rest = " not responding, so \(several ? "their" : "its") \(windows) did not come back. "
-            + (several ? "Use Repair Layout when they respond." : "Use Repair Layout when it responds.")
-        guard !names.isEmpty else { return "An application is" + rest }
+        let several = names.isEmpty ? applicationCount > 1 : names.count > 1
+        let action = switch remedy {
+        case .repairLayout: several ? "Use Repair Layout when they respond." : "Use Repair Layout when it responds."
+        case .tryAgain: several ? "Try again when they respond." : "Try again when it responds."
+        }
+        let rest = " not responding, so \(several ? "their" : "its") \(windows) did not come back. " + action
+        guard !names.isEmpty else { return (several ? "Some applications are" : "An application is") + rest }
         let shown = Array(names.prefix(2))
         let more = names.count - shown.count
         return ResultPillLayout.detail(naming: shown) { titles in
             let list = switch (titles.count, more) {
             case (1, _): titles[0]
             case (_, 0): "\(titles[0]) and \(titles[1])"
-            default: "\(titles[0]), \(titles[1]), and \(more) more"
+            case (_, 1): "\(titles[0]), \(titles[1]), and 1 more app"
+            default: "\(titles[0]), \(titles[1]), and \(more) more apps"
             }
             return list + (several ? " are" : " is") + rest
         }

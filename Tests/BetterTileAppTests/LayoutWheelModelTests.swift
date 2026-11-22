@@ -225,7 +225,26 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, L
     }
 
     func requestAccessibilityPermission(prompt: Bool) -> Bool { permission }
-    func isApplicationUnresponsive(for windowID: WindowID) -> Bool { unresponsiveWindowIDs.contains(windowID) }
+    func isApplicationUnresponsive(for windowID: WindowID) -> Bool {
+        if unresponsiveWindowIDs.contains(windowID) { return true }
+        // Like the adapter, which reports only its gate's 2 s call hold.
+        guard adapterGateReportsUnresponsive, adapterInventoryTimeouts != nil,
+              let pid = windows.first(where: { $0.id == windowID })?.processIdentifier else { return false }
+        return adapterGate.isHeld(pid, now: applicationHoldUptime())
+    }
+    /// Opt-in: `isApplicationUnresponsive` follows the adapter gate's call
+    /// hold, which expires 2 s after the last stall.
+    var adapterGateReportsUnresponsive = false
+    /// Windows whose cached element was dropped, as a timed-out write drops it.
+    /// A targeted read then runs a complete sweep to find the element again,
+    /// and a sweep in inventory backoff does not message the application.
+    var droppedElementWindowIDs: Set<WindowID> = []
+    /// Records stalls as calls that waited out their timeout would.
+    func recordAdapterStalls(_ pid: Int32, count: Int) {
+        for _ in 0..<count {
+            adapterGate.record(pid, cannotComplete: true, elapsed: 0.35, now: applicationHoldUptime())
+        }
+    }
     var focusedID: WindowID?
     var focusRequests: [WindowID] = []
     var acceptsFocusRequests = true
@@ -410,8 +429,19 @@ final class FakeAppWindowSystem: BetterTileWindowSystem, CreatedWindowReading, L
         windowSnapshotRequests.append(ids)
         onWindowSnapshots?()
         refreshLearnedConstraints()
+        let dropped = ids.intersection(droppedElementWindowIDs)
+        if !dropped.isEmpty {
+            // As the adapter's `refreshElement`: one complete sweep. Only an
+            // application that the sweep read gives its element back.
+            _ = try? visibleWindows()
+            for id in dropped {
+                guard let pid = windows.first(where: { $0.id == id })?.processIdentifier,
+                      adapterHolds[pid] == nil else { continue }
+                droppedElementWindowIDs.remove(id)
+            }
+        }
         let snapshots = windows.filter { window in
-            ids.contains(window.id)
+            ids.contains(window.id) && !droppedElementWindowIDs.contains(window.id)
                 && unreadableAfterWrites[window.id].map { frameWriteCounts[window.id, default: 0] < $0 } ?? true
                 && adapterCall(window.processIdentifier)
         }

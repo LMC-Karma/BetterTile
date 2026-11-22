@@ -1425,9 +1425,13 @@ application quits. The record ends when the desktop leaves Adaptive or a Saved
 Layout apply resets Focus mode state.
 
 A stopped or hung application cannot answer Accessibility reads, so its peer
-cannot be read back. Such a peer counts as away only with direct evidence:
-its application stopped answering, so the adapter holds it as unresponsive,
-and WindowServer does not show the window on screen. That WindowServer read
+cannot be read back. Such a peer counts as away only with direct evidence
+that its application stopped answering, and only while WindowServer does not
+show the window on screen. The evidence is the adapter's 2-second call hold
+after a timed-out call, or the last sweep leaving the application unread
+during its inventory backoff. The hold alone can expire while the
+application is still stopped, because a sweep in backoff does not message
+it. That WindowServer read
 asks no application. The pill then says that the application is not
 responding and that Repair can bring the window back when it responds. A
 held application is not read again during the same check, so a hung
@@ -1435,10 +1439,11 @@ application costs at most one timeout per check. A peer that the desktop
 observation places only on Spaces that are not current, including its own
 full-screen Space, leaves the record without a report, and Repair does not
 restore it: the user moved it, and Repair cannot bring it back to this
-desktop. Any other unreadable peer, for example one that closed, is not
-reported. Pills name the application from the process and bundle recorded
-when Focus mode began. The bundle must still match, because a process number
-can be reused.
+desktop. Any other unreadable peer is not reported, even when macOS refused
+its restore: it may have closed, or, without a desktop observation, it may be
+on another Space. Pills name the application from the process and bundle
+recorded when Focus mode began. The bundle must still match, because a
+process number can be reused.
 
 Keyboard and captured Layout Wheel partitions use the same peer-return wait.
 When all peers are visible, the partition runs synchronously. Otherwise it
