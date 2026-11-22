@@ -18,10 +18,8 @@ struct DiagnosticsSupportTests {
         #expect(pasteboard.data(forType: .png) == nil)
     }
 
-    @Test func readsVersionsArchitectureAndThePrivateAPISwitch() throws {
-        let suite = "DiagnosticsSupportTests-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+    @Test func readsVersionsArchitectureAndThePrivateAPISwitch() {
+        let defaults = PrivateAPISwitchDefaults()
         defaults.set(true, forKey: "disablePrivateAPIs")
 
         let environment = DiagnosticsEnvironmentReader.current(
@@ -68,4 +66,11 @@ struct DiagnosticsSupportTests {
             DiagnosticsResult(kind: .warning, message: nil),
         ])
     }
+}
+
+/// Keeps values in memory, so the test leaves no preferences file behind.
+private final class PrivateAPISwitchDefaults: UserDefaults, @unchecked Sendable {
+    private var values: [String: Bool] = [:]
+    override func bool(forKey key: String) -> Bool { values[key] ?? false }
+    override func set(_ value: Bool, forKey key: String) { values[key] = value }
 }
