@@ -5450,9 +5450,10 @@ final class BetterTileModel {
             let peers = session.excludedFocusWindowIDs
             let refused = restoreFocusPeers(peers, sessionID: session.id)
             sessionStore.update(display.id) { $0.excludedFocusWindowIDs.removeAll() }
-            // A Repair reports after the wait. A plain Restore reports a
-            // peer that is still away at the deadline, unless it already
-            // reported that peer here.
+            // A Repair reports after the wait. At the deadline a plain
+            // Restore reports only a peer whose application is not
+            // responding, unless it already reported that peer here. A slow
+            // peer that is still minimized stays recorded without a report.
             scheduleBentoFocusRestore(session: session, display: display, afterRestore: afterRestore,
                                       reportsUnreturnedPeers: afterRestore == nil, reportedPeers: refused)
             if !refused.isEmpty {
