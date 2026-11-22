@@ -112,7 +112,11 @@ final class BetterTileModel {
             + "Changes apply only for this session. Saving is blocked to preserve the configuration file. "
             + "Restore a valid configuration at \(store.fileURL.path), then quit and reopen BetterTile."
     }
-    private(set) var lastActionFeedback: ResultPillFeedback?
+    private(set) var lastActionFeedback: ResultPillFeedback? {
+        didSet { if let lastActionFeedback { diagnosticsResults.record(lastActionFeedback) } }
+    }
+    /// The last few pill kinds and fixed titles, for Copy Diagnostics. Memory only.
+    @ObservationIgnored private(set) var diagnosticsResults = DiagnosticsResultLog()
     private(set) var activeDisplayID: DisplayID?
     private(set) var layoutWheelMonitoringFailure: String?
     let savedLayoutTarget = SavedLayoutTarget()
@@ -904,6 +908,23 @@ final class BetterTileModel {
 
     func activeMode(for displayID: DisplayID) -> LayoutMode? {
         sessionStore.session(for: displayID)?.mode
+    }
+
+    /// Copy Diagnostics reads display geometry, modes and window counts here.
+    /// The report keeps no window, app or display identity.
+    func diagnosticsReport(environment: DiagnosticsReport.Environment) -> DiagnosticsReport {
+        let displays = system.displays()
+        var sessions: [DisplayID: LayoutSession] = [:]
+        for display in displays { sessions[display.id] = sessionStore.session(for: display.id) }
+        return DiagnosticsReport(environment: environment, displays: displays, sessions: sessions,
+                                 configuration: configuration, recentResults: diagnosticsResults)
+    }
+
+    func presentDiagnosticsCopyResult(copied: Bool) {
+        presentActionResult(succeeded: copied,
+                            feedback: copied ? .success(DiagnosticsReport.copiedMessage)
+                                : .failure(title: DiagnosticsReport.copyFailedMessage, detail: nil),
+                            displayID: nil)
     }
 
     func setActiveMode(_ mode: LayoutMode) {
