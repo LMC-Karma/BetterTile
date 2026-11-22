@@ -1,0 +1,31 @@
+# Dependabot proposes dependency updates as pull requests. Each update gets the
+# same review as any other dependency change (see SECURITY.md). Nothing merges
+# automatically.
+version: 2
+updates:
+  # Workflow and composite-action pins on main.
+  - package-ecosystem: github-actions
+    directories:
+      - /
+      - /.github/actions/setup-metal
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  # The website's workflow lives on the gh-pages branch.
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: gh-pages
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  # Sparkle, the only runtime dependency.
+  - package-ecosystem: swift
+    directory: /
+    schedule:
+      interval: weekly
