@@ -4,6 +4,9 @@
 import Foundation
 
 /// Assignment policy only. SavedLayoutPlanner fits the resulting session afterward.
+/// `SavedLayoutPlanner.plan` is the only caller. It validates the document and rejects
+/// duplicate window IDs first, so every slot has one pane or rectangle and the lookups
+/// below always find their key.
 struct SavedLayoutFill {
     var assignments: [String: WindowID] = [:]
     var reasons: [String: SavedLayoutSlotReason] = [:]

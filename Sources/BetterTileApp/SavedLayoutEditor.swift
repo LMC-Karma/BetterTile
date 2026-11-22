@@ -95,6 +95,8 @@ struct SavedLayoutResize {
     private var nameFollowsShape = false
     private var lastNudge: (key: String, time: TimeInterval)?
     @ObservationIgnored var clock: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+    /// Every editor write encodes through this. Tests replace it to reach the failure paths.
+    @ObservationIgnored var encodeLayout: (SavedLayoutDocument) throws -> Data = SavedLayoutValidator.encode
     var document: SavedLayoutDocument? { draft.lastKnownGood }
     var selectedLibraryURL: URL? {
         url ?? (document == nil ? rejectedURL.flatMap { files.owns($0) ? $0 : nil } : nil)
@@ -135,7 +137,7 @@ struct SavedLayoutResize {
                         throw SavedLayoutFileError(message: "Reload a valid App Groups file before importing. Nothing was changed.")
                     }
                 }
-                acceptImport(transfer.document, source: source); return true
+                try acceptImport(transfer.document, source: source); return true
             }
             pendingImport = request
             return false
@@ -148,19 +150,20 @@ struct SavedLayoutResize {
             guard groups.error == nil else { throw SavedLayoutFileError(message: "Reload a valid App Groups file before importing. Nothing was changed.") }
             let (document, updatedGroups) = try request.resolved(using: groups.document)
             // Validate every byte before the store writes. A refusal keeps the draft and library.
-            let bytes = try SavedLayoutValidator.encode(document)
+            let bytes = try encodeLayout(document)
             if updatedGroups != groups.document { try groups.save(updatedGroups) }
             else if try groups.hasExternalChange() {
                 throw SavedLayoutFileError(message: "App Groups changed outside BetterTile. Reload and try importing again.")
             }
-            acceptImport(document, source: request.source, bytes: bytes)
+            try acceptImport(document, source: request.source, bytes: bytes)
             pendingImport = nil
             return true
         } catch { reportFailure("Couldn’t import: \(error.localizedDescription) Your draft and library were kept."); return false }
     }
 
-    private func acceptImport(_ document: SavedLayoutDocument, source: URL, bytes: Data? = nil) {
-        let bytes = bytes ?? (try! SavedLayoutValidator.encode(document))
+    /// Encodes before any state change, so a thrown error keeps the draft and source.
+    private func acceptImport(_ document: SavedLayoutDocument, source: URL, bytes: Data? = nil) throws {
+        let bytes = try bytes ?? encodeLayout(document)
         protectedSourceURLs.insert(source.resolvingSymlinksInPath())
         draft = SavedLayoutDraft(); draft.update(bytes)
         url = nil; sourceURL = source; baseline = nil
@@ -204,14 +207,21 @@ struct SavedLayoutResize {
         catch { libraryError = "Couldn’t list Saved Layouts: \(error.localizedDescription) Check folder access, then reload the library." }
     }
 
-    func returnToLastValid() {
-        guard let document else { return }
-        draft.update(try! SavedLayoutValidator.encode(document))
-        message = "Showing the last valid layout. The rejected source file is unchanged."
-        resize = nil
+    @discardableResult func returnToLastValid() -> Bool {
+        guard let document else { return false }
+        do {
+            draft.update(try encodeLayout(document))
+            message = "Showing the last valid layout. The rejected source file is unchanged."
+            resize = nil
+            return true
+        } catch {
+            reportFailure("Couldn’t show the last valid layout: \(error.localizedDescription) The draft and source were kept.")
+            return false
+        }
     }
 
-    func newLayout(mode: LayoutMode = .bento) {
+    /// A refusal keeps the current draft and selection.
+    @discardableResult func newLayout(mode: LayoutMode = .bento) -> Bool {
         let slot = SavedLayoutCanvas.defaultID("slot")
         let group = SavedLayoutCanvas.defaultID("group")
         let value = SavedLayoutDocument(name: "Untitled Layout", mode: mode,
@@ -219,10 +229,16 @@ struct SavedLayoutResize {
             slots: [.init(id: slot)],
             groups: mode == .tabbed ? [.init(id: group, slots: [slot], selected: slot)] : [],
             windows: mode == .manual ? [.init(slot: slot, rect: .init(x: 0.1, y: 0.1, width: 0.6, height: 0.65))] : [])
+        let bytes: Data
+        do { bytes = try encodeLayout(value) } catch {
+            reportFailure("Couldn’t start a new layout: \(error.localizedDescription) Your draft was kept.")
+            return false
+        }
         draft = SavedLayoutDraft()
-        draft.update(try! SavedLayoutValidator.encode(value))
+        draft.update(bytes)
         url = nil; sourceURL = nil; baseline = nil; selectedPane = nil; selectedRectangle = nil; message = nil
         resetHistory(); nameFollowsShape = true
+        return true
     }
 
     /// Discard an unsaved creation when there was no library selection to return to.
@@ -289,7 +305,7 @@ struct SavedLayoutResize {
             else if nameFollowsShape, value.layout != original.layout, let layout = value.layout {
                 value.name = SavedLayoutCanvas.shape(layout).name
             }
-            let bytes = try SavedLayoutValidator.encode(value)
+            let bytes = try encodeLayout(value)
             if bytes != draft.source { record(original, label: label, key: key) }
             draft.update(bytes)
             noteApps(in: value)
@@ -315,7 +331,7 @@ struct SavedLayoutResize {
     }
 
     private func restore(_ snapshot: SavedLayoutDocument) -> Bool {
-        guard let bytes = try? SavedLayoutValidator.encode(snapshot), draft.update(bytes) else { return false }
+        guard let bytes = try? encodeLayout(snapshot), draft.update(bytes) else { return false }
         if let path = selectedPath, snapshot.layout.map({ SavedLayoutCanvas.leaves($0).contains { $0.path == path } }) != true {
             selectedPane = nil
         }
@@ -367,7 +383,7 @@ struct SavedLayoutResize {
         guard !hasInvalidSource, var value = document else { return false }
         do {
             if let name { value.name = name }
-            let bytes = try SavedLayoutValidator.encode(value)
+            let bytes = try encodeLayout(value)
             let destination: URL
             if name == nil, let url, let baseline { try files.save(bytes, to: url, expected: baseline); destination = url }
             else { destination = try files.create(bytes) }
@@ -396,7 +412,7 @@ struct SavedLayoutResize {
             }
             _ = try SavedLayoutValidator.decode(current)
             let replacement = try SavedLayoutUpdateMapping.updating(original, from: captured)
-            let bytes = try SavedLayoutValidator.encode(replacement)
+            let bytes = try encodeLayout(replacement)
             try files.save(bytes, to: url, expected: baseline)
             let retained = Set(original.slots.filter { replacement.slots.contains($0) }.map(\.id))
             positions.retain(retained, for: url.lastPathComponent)
