@@ -217,6 +217,91 @@ func choosingAdaptiveDuringRestoresWaitTriesTheMissingPeerAgain() async throws {
     expectRepairPartial(model)
 }
 
+/// A stopped or hung application cannot answer Accessibility reads or
+/// writes, so its minimized peer is unreadable. WindowServer still shows it
+/// off screen. Restore names the application from the process recorded at
+/// Focus entry, and Repair warns instead of reporting "Layout applied".
+@Test(.appTestApplication, .timeLimit(.minutes(5)), arguments: FocusPeerFailure.allCases) @MainActor
+func aFocusPeerWhoseApplicationDoesNotAnswerIsNamedAndReported(failure: FocusPeerFailure) async throws {
+    let (system, model, stuck) = try await focusModeWithTwoPeers()
+    defer { model.shutdown() }
+    model.applicationNameForProcess = { $0 == 44 ? "Stopped Fixture" : nil }
+    let notResponding = "The Stopped Fixture window did not come back. Stopped Fixture is not responding."
+    // The application stops: every read of its window fails from now on.
+    system.unreadableAfterWrites[stuck] = 0
+    stuckPeerFails(failure, stuck: stuck, system: system)
+
+    model.perform(.restore)
+    if failure == .refused {
+        #expect(model.lastActionFeedback == .failure(title: "Use Repair Layout", detail: notResponding),
+                "\(feedbackText(model))")
+    }
+    await settleFocusRestore(model, system: system)
+    let restoreResult: ResultPillFeedback = failure == .refused
+        ? .failure(title: "Use Repair Layout", detail: notResponding)
+        : .layoutResult(title: "Layout partly restored", detail: notResponding, kind: .warning, actions: [])
+    #expect(model.lastActionFeedback == restoreResult, "\(feedbackText(model))")
+
+    model.tileCurrentDisplay()
+    #expect(await system.waitFor(timeout: .seconds(6)) { model.lastActionFeedback?.message == repairPartial },
+            "\(feedbackText(model))")
+    await settleFocusRestore(model, system: system)
+    #expect(model.lastActionFeedback == .layoutResult(title: repairPartial, detail: notResponding,
+                                                      kind: .warning, actions: []), "\(feedbackText(model))")
+    #expect(system.windows.first { $0.id == stuck }?.isMinimized == true)
+
+    // The application answers again: Repair brings the peer back.
+    system.unreadableAfterWrites = [:]
+    system.failedRestoreWindowIDs = []
+    system.slowRestoreIDs = []
+    model.tileCurrentDisplay()
+    #expect(await system.waitFor(timeout: .seconds(6)) { model.lastActionFeedback?.kind == .success },
+            "\(feedbackText(model))")
+    await settleFocusRestore(model, system: system)
+    #expect(system.windows.allSatisfy { !$0.isMinimized })
+    #expect(fillsDisplay(system.windows, system: system), "\(system.windows.map(\.frame))")
+}
+
+/// An unreadable peer that WindowServer shows on screen is back, even while
+/// its application does not answer. Repair does not report it.
+@Test(.appTestApplication, .timeLimit(.minutes(5))) @MainActor
+func anUnreadablePeerOnScreenIsNotReported() async throws {
+    let (system, model, stuck) = try await focusModeWithTwoPeers()
+    defer { model.shutdown() }
+    stuckPeerFails(.refused, stuck: stuck, system: system)
+    model.perform(.restore)
+    await settleFocusRestore(model, system: system)
+    // The window came back without BetterTile, and its application then
+    // stopped answering.
+    let index = try #require(system.windows.firstIndex { $0.id == stuck })
+    system.windows[index].isMinimized = false
+    system.unreadableAfterWrites[stuck] = 0
+    // The inventory sweep cannot read the hung application either.
+    system.applicationHoldsUntil[44] = 1_000_000
+    system.failedRestoreWindowIDs = []
+    let before = model.lastActionFeedback
+    model.tileCurrentDisplay()
+    // The held application keeps recovery passes running, so wait for the
+    // Repair result rather than for an idle model.
+    #expect(await system.waitFor(timeout: .seconds(6)) { model.lastActionFeedback != before },
+            "\(feedbackText(model))")
+    #expect(model.lastActionFeedback?.message != repairPartial, "\(feedbackText(model))")
+    #expect(model.lastActionFeedback?.kind == .success, "\(feedbackText(model))")
+}
+
+@Test func aNotRespondingFocusPeerMessageNamesTheApplication() {
+    let message = { (names: [String], count: Int) in
+        BetterTileModel.notRespondingFocusPeersMessage(names: names, windowCount: count)
+    }
+    #expect(message(["TextEdit"], 1) == "The TextEdit window did not come back. TextEdit is not responding.")
+    #expect(message(["TextEdit", "Terminal"], 2)
+        == "The TextEdit and Terminal windows did not come back. TextEdit and Terminal are not responding.")
+    #expect(message(["A", "B", "C"], 3)
+        == "The A, B, and 1 more windows did not come back. Their applications are not responding.")
+    #expect(message([], 1) == "A window did not come back. Its application is not responding.")
+    #expect(message([], 2) == "2 windows did not come back. Their applications are not responding.")
+}
+
 @Test func anUnreturnedFocusPeerMessageNamesEachApplicationOnce() {
     let message = { (names: [String], count: Int) in
         BetterTileModel.unreturnedFocusPeersMessage(names: names, windowCount: count)
@@ -299,6 +384,9 @@ func choosingAdaptiveDuringRestoresWaitTriesTheMissingPeerAgain() async throws {
     }
     system.emitsMinimizationEvents = true
     let model = makeModel(system: system)
+    // Fake process numbers can belong to real processes on this Mac. Name
+    // applications from their bundle unless a test names a process.
+    model.applicationNameForProcess = { _ in nil }
     model.configuration.bentoInnerGap = 0
     model.setActiveMode(.bento)
     try #require(await system.waitFor { system.frameWriteCounts.count == system.windows.count })
@@ -309,4 +397,19 @@ func choosingAdaptiveDuringRestoresWaitTriesTheMissingPeerAgain() async throws {
     try #require(system.windows.dropFirst().allSatisfy { $0.isMinimized })
     await settleFocusRestore(model, system: system)
     return (system, model, WindowID(rawValue: "stuck"))
+}
+
+/// WindowServer state as the Accessibility adapter reads it: a window it
+/// knows is on screen unless it is minimized, hidden or off screen. It asks
+/// no application, so it answers for an unreadable window too.
+extension FakeAppWindowSystem: WindowStackReading {
+    func onScreenStack(labeling ids: Set<WindowID>) -> [SeamStackEntry]? { nil }
+
+    func windowServerPresence(for ids: Set<WindowID>) -> [WindowID: WindowServerPresence]? {
+        Dictionary(uniqueKeysWithValues: windows.filter { ids.contains($0.id) }.map { window in
+            (window.id, WindowServerPresence(
+                isOnScreen: !window.isMinimized && !window.isHidden && !offscreenWindowIDs.contains(window.id),
+                processIdentifier: window.processIdentifier))
+        })
+    }
 }

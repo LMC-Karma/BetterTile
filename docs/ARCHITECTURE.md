@@ -1424,6 +1424,15 @@ when it is seen on screen, sends a restored or destroyed notification, or its
 application quits. The record ends when the desktop leaves Adaptive or a Saved
 Layout apply resets Focus mode state.
 
+A stopped or hung application cannot answer Accessibility reads, so its peer
+cannot be read back. Such a peer counts as away while WindowServer shows it off
+screen; that read asks no application. The pill then says that the window did
+not come back and that its application is not responding. An unreadable peer
+that WindowServer shows on screen is back, and one that WindowServer does not
+know may have closed, so neither is reported. Pills name the application from
+the process recorded when Focus mode began, which a hung application cannot
+block.
+
 Keyboard and captured Layout Wheel partitions use the same peer-return wait.
 When all peers are visible, the partition runs synchronously. Otherwise it
 keeps the original target and replans after the peers return or the 1.5-second

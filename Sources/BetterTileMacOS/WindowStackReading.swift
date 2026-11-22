@@ -8,10 +8,28 @@ public protocol WindowStackReading {
     /// report a new Accessibility frame before it draws at that size; these
     /// frames are what the user sees. Nil when unavailable.
     func windowServerFrames(for ids: Set<WindowID>) -> [WindowID: BTRect]?
+    /// What WindowServer knows about these windows: whether each is on
+    /// screen, and its owner process. It asks no application, so a hung or
+    /// stopped application cannot block it. A window WindowServer does not
+    /// know, or whose identity is not exact, is left out. Nil when
+    /// unavailable.
+    func windowServerPresence(for ids: Set<WindowID>) -> [WindowID: WindowServerPresence]?
 }
 
 public extension WindowStackReading {
     func windowServerFrames(for ids: Set<WindowID>) -> [WindowID: BTRect]? { nil }
+    func windowServerPresence(for ids: Set<WindowID>) -> [WindowID: WindowServerPresence]? { nil }
+}
+
+/// One window as WindowServer shows it, without its application.
+public struct WindowServerPresence: Hashable, Sendable {
+    public var isOnScreen: Bool
+    public var processIdentifier: Int32
+
+    public init(isOnScreen: Bool, processIdentifier: Int32) {
+        self.isOnScreen = isOnScreen
+        self.processIdentifier = processIdentifier
+    }
 }
 
 /// Reads only the five public fields needed for seam coverage.
