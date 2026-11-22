@@ -3,6 +3,10 @@
 Thanks for your interest in BetterTile. Issues, discussion, and pull requests
 are welcome.
 
+Everyone who takes part in this project must follow the
+[Code of Conduct](CODE_OF_CONDUCT.md). Read [SUPPORT.md](SUPPORT.md) for where
+to ask questions and what a good bug report includes.
+
 New here? [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) walks through building,
 signing, running, and testing on your own Mac.
 
