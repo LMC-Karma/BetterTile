@@ -195,6 +195,53 @@ information, layout or Bento state, configuration, shortcuts, diagnostics,
 analytics, telemetry, crash reports, system profile, or any other user or
 machine data in the URL. This is covered by an automated test.
 
+### Copy Diagnostics
+
+The **Copy Diagnostics** menu item, next to **Send Feedback…**, puts a
+plain-text report on the general pasteboard. The user can paste it into a bug
+report. BetterTile does not send, save, or log the report. It makes no network
+request, writes no file, and adds no permission, private API, or dependency.
+A Result pill confirms the copy.
+
+The report helps a maintainer reproduce a bug without asking for each fact.
+It contains:
+
+- the BetterTile version and build, the macOS version and build, and the CPU
+  architecture
+- whether Accessibility permission is granted, and whether the
+  `disablePrivateAPIs` default is set
+- for each display: a 1-based index, size in points, scale, its arrangement
+  origin, and whether it is the primary display or has keyboard focus
+- for each display's current desktop: the layout mode (Manual, Adaptive, or
+  Tabbed), the number of windows and automatic floats, whether a Saved Layout
+  is followed, and whether automatic placement is paused because a failed
+  change could not be fully undone
+- a short list of behavior settings, such as snapping, resize feedback, the
+  Adaptive gap, Tabbed preset, Layout Wheel style and triggers, and whether
+  update checks are automatic; app rules appear only as a count
+- the kind of the last five Result pills, with the title only when it is one
+  of BetterTile's fixed titles
+
+The report never contains window titles, document names or paths, app names or
+bundle identifiers, Saved Layout or App Group names, shortcut bindings, the
+user or computer name, serial numbers, hardware UUIDs, or display UUIDs or
+serial numbers. A Result pill title that can name a window, an app, or a Saved
+Layout is replaced by a fixed "withheld" note. Pill details are never kept.
+
+This meets the rule for optional diagnostics below. The user starts each copy,
+so it is opt-in every time. Retention: the last five pill kinds and fixed titles
+are kept in memory only and are discarded when BetterTile quits; the report
+itself exists only on the pasteboard. Off switch: if the user never chooses the
+menu item, no report is built. Nothing leaves the Mac unless the user pastes
+and submits it, and the user can read and edit the text first.
+
+Automated tests cover the exact report text, the exclusion of titles, app
+identities, paths, Saved Layout names, the user and host name, and display
+UUIDs that are fed through the report's inputs, the withheld pill titles, and
+the copy to an injected pasteboard. A live check on a Mac confirmed the menu
+placement, the Result pill, the display labels, and that a window title, the
+app name, the user name, and the host name stayed out of the copied text.
+
 Any future network feature must serve a documented user-facing purpose,
 minimize transmitted data, use secure transport, and document its endpoints
 and payload purpose here before release. Optional diagnostics require a
