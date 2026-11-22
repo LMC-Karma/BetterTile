@@ -25,18 +25,10 @@ report.
 
 ### What to expect
 
-One maintainer runs this project. You can expect an initial reply within a few
-days. The maintainer cannot promise a fix date.
-
-- The maintainer confirms or declines the report, and gives the reason.
-- While the report is open, the maintainer sends a status update at least every
-  14 days.
-- For a confirmed problem, the maintainer and the reporter agree on a public
-  disclosure date. The usual order is: fix, release, then a public GitHub
-  security advisory.
-- If no fix is released within 90 days of the report, the reporter may
-  disclose publicly after telling the maintainer first.
-- The advisory credits the reporter if the reporter agrees.
+One maintainer runs this project, so fixes can take time. You can expect an
+initial reply within a few days. For a confirmed problem, the fix ships first,
+then a public GitHub security advisory that credits the reporter if the
+reporter agrees.
 
 ## Supported versions
 
