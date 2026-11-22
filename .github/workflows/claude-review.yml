@@ -73,11 +73,13 @@ jobs:
             - BetterTile accepts no SIP workaround or code injection.
             - Private Apple APIs require a written design discussion, maintainer
               approval, product fit, compatibility tests, safe fallback, and the
-              disclosure required by SECURITY.md. Public APIs remain the default.
+              disclosure required by SECURITY.md and recorded in
+              docs/SECURITY_DISCLOSURES.md. Public APIs remain the default.
             - The app delegate owns SPUStandardUpdaterController and implements
               SPUUpdaterDelegate. BetterTileCore has no updater API.
 
-            SECURITY.md is the canonical policy for networking, privacy,
+            SECURITY.md and docs/SECURITY_DISCLOSURES.md are the canonical
+            policy and disclosure record for networking, privacy,
             permissions, privileged components, dependencies, distribution,
             updates, licensing, and user-data handling. For a finding in one of
             these areas, cite the relevant rule and verify the required benefit,

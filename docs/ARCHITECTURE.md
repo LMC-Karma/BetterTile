@@ -1880,7 +1880,7 @@ Empty panes and populated tab bars expose **Add App**. The overlay emits an
 owner-bound callback to the app model. `PaneApplicationPicker` wraps the shared
 `ApplicationPicker`; it adds no catalog or persisted setting. The shared
 picker lists Recent, Running, and All Apps, and records each choice in the
-local Recent list described in [SECURITY.md](../SECURITY.md). A nonactivating
+local Recent list described in [SECURITY_DISCLOSURES.md](SECURITY_DISCLOSURES.md#permissions-and-dependencies). A nonactivating
 bar's **Show Tab Bar** keyboard path also accepts `+`. Native buttons and
 existing-window choices have accessibility labels. One presentation holds
 Auto-hide open through application selection, creation, fallback and placement.
@@ -1900,7 +1900,7 @@ public menu operation. Exact **New Window** and recognized complete localized
 window titles take priority. Bare ⌘N qualifies only from the File menu (by
 position) and only with an allow-listed complete window or generic document
 title; otherwise reopen, then **Use a window from this desktop**. The small
-localized title table is disclosed in SECURITY.md. Unknown titles use reopen. There is no consent UI, answer store,
+localized title table is disclosed in SECURITY_DISCLOSURES.md. Unknown titles use reopen. There is no consent UI, answer store,
 or unanswered-question reservation.
 The obsolete defaults key is ignored. Several instances use the active or
 frontmost instance automatically. Missing menu commands use
@@ -1921,7 +1921,7 @@ refreshes native desktop observation with cached windows, without an AX window
 inventory. Placement still validates a full snapshot. Tests use fake AX trees
 and delayed readers. Unsupported menu operations try reopening automatically. If no window arrives
 within the request timeout, the pane offers current-desktop window choices. Launch and menu requests can create no window. They
-cannot be undone by frame rollback. See [SECURITY.md](../SECURITY.md) for the
+cannot be undone by frame rollback. See [SECURITY_DISCLOSURES.md](SECURITY_DISCLOSURES.md#permissions-and-dependencies) for the
 exact operation and retained-data scope.
 
 Before ordinary Tabbed arrival routing, the model reserves new windows of the
