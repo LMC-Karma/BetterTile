@@ -28,6 +28,18 @@ body:
       description: Find this in the update window or the downloaded release name.
     validations:
       required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: >-
+        Optional. In BetterTile 0.6.3 or later, choose Copy Diagnostics in the
+        BetterTile menu, then paste the result here. The report has versions,
+        display sizes, layout modes, window counts, and a few settings. It has
+        no window titles, app names, or file paths. Read it before you submit.
+      render: text
+    validations:
+      required: false
   - type: dropdown
     id: layout-mode
     attributes:
