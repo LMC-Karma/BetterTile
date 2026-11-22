@@ -93,7 +93,7 @@ import Testing
         Layout Wheel keyboard trigger: Control + Option
         Layout Wheel mouse trigger: Middle click
         Liquid Glass overlays: On
-        Accessibility write policy: disableAndRestore
+        Enhanced accessibility: Restore After Moving
         App rules: 0
         Update checks: Automatic
 

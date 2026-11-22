@@ -211,7 +211,7 @@ public struct DiagnosticsReport: Equatable, Sendable {
             Setting("Layout Wheel keyboard trigger", keyboardTrigger),
             Setting("Layout Wheel mouse trigger", mouseTrigger),
             Setting("Liquid Glass overlays", onOff(c.overlayAppearance.useLiquidGlass)),
-            Setting("Accessibility write policy", c.enhancedUserInterfacePolicy.rawValue),
+            Setting("Enhanced accessibility", c.enhancedUserInterfacePolicy.title),
             Setting("App rules", "\(c.applicationRules.entries.count)"),
             Setting("Update checks", updates),
         ]
