@@ -380,6 +380,47 @@ func aStoppedPeerInInventoryBackoffIsReportedAfterItsCallHoldExpires() async thr
         kind: .warning, actions: []), "\(feedbackText(model))")
 }
 
+/// An application that becomes active again releases the adapter gate at
+/// once, but the sweep's unread set changes only at the next complete
+/// sweep. A readable minimized peer of that recovered application is
+/// reported as minimized, not as not responding, and nothing lingers after
+/// a Repair brings it back.
+@Test(.appTestApplication, .timeLimit(.minutes(5))) @MainActor
+func aRecoveredApplicationWithAStaleSweepHoldIsReadBeforeItIsJudged() async throws {
+    let (system, model, stuck) = try await focusModeWithTwoPeers(modelsAdapterGate: true)
+    defer { model.shutdown() }
+    // The application stalls in a sweep, then answers again and becomes
+    // active, which releases the gate but leaves the sweep's hold.
+    system.adapterInventoryTimeouts = [44: 0.35]
+    _ = try system.visibleWindows()
+    system.adapterInventoryTimeouts = [:]
+    system.adapterApplicationRuns(44)
+    try #require(!system.isApplicationUnresponsive(for: stuck))
+    try #require(system.unreadableApplicationWindowIDs.contains(stuck))
+
+    // macOS refuses the restore for another reason. No sweep runs first.
+    system.failedRestoreWindowIDs = [stuck]
+    model.perform(.restore)
+    #expect(model.lastActionFeedback == .failure(title: "Use Repair Layout", detail: stuckMinimized),
+            "\(feedbackText(model))")
+    await settleFocusRestore(model, system: system)
+
+    model.tileCurrentDisplay()
+    #expect(await system.waitFor(timeout: .seconds(6)) { model.lastActionFeedback?.message == repairPartial },
+            "\(feedbackText(model))")
+    expectRepairPartial(model)
+
+    system.failedRestoreWindowIDs = []
+    model.tileCurrentDisplay()
+    #expect(await system.waitFor(timeout: .seconds(6)) { model.lastActionFeedback?.kind == .success },
+            "\(feedbackText(model))")
+    await settleFocusRestore(model, system: system)
+    #expect(system.windows.allSatisfy { !$0.isMinimized })
+    model.tileCurrentDisplay()
+    await settleFocusRestore(model, system: system)
+    #expect(model.lastActionFeedback?.kind == .success, "\(feedbackText(model))")
+}
+
 /// An unreadable peer whose application still answers is not evidence of a
 /// stuck window, even when macOS refused its restore. Without a desktop
 /// observation, as with private APIs off, it may simply be on another Space.

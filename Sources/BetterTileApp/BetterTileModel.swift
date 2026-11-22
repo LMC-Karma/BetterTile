@@ -5704,22 +5704,27 @@ final class BetterTileModel {
         var notAnswering: Set<WindowID> = []
         var silent: Set<Int32> = []
         // Evidence that an application does not answer: a call that waited
-        // out its timeout holds it for 2 s, and a sweep then keeps it in
-        // inventory backoff, up to 30 s, without messaging it. A targeted read
-        // during that backoff can fail without a call, so the hold alone
-        // could expire while the application is still stopped.
-        func isNotAnswering(_ id: WindowID) -> Bool {
-            system.isApplicationUnresponsive(for: id) || system.unreadableApplicationWindowIDs.contains(id)
-        }
+        // out its timeout holds it for 2 s (`UnresponsiveApplicationGate`), and
+        // a sweep then keeps it in inventory backoff, up to
+        // `maximumInventoryBackoffSeconds`, without messaging it. A targeted
+        // read during that backoff can fail without a call, so the call hold
+        // alone could expire while the application is still stopped.
+        //
+        // Before a read, only the call hold skips it. The sweep's unread set
+        // is rebuilt only by a complete sweep, and an application that
+        // becomes active again releases the gate but not that set, so a
+        // recovered application must still be read.
         for id in windowIDs.sorted() {
             let process = unreturnedFocusPeerProcesses[id]?.processIdentifier
             if let process, silent.contains(process) { notAnswering.insert(id); continue }
-            if !isNotAnswering(id), let snapshot = (try? system.windowSnapshots(ids: [id]))?.first {
+            if !system.isApplicationUnresponsive(for: id),
+               let snapshot = (try? system.windowSnapshots(ids: [id]))?.first {
                 snapshots[id] = snapshot
                 continue
             }
-            // The read itself can time out or run a sweep that backs off.
-            if isNotAnswering(id) {
+            // After a failed read, the read itself can have timed out, or run a
+            // sweep that left the application unread during its backoff.
+            if system.isApplicationUnresponsive(for: id) || system.unreadableApplicationWindowIDs.contains(id) {
                 notAnswering.insert(id)
                 if let process { silent.insert(process) }
             }

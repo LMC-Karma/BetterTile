@@ -1427,12 +1427,15 @@ Layout apply resets Focus mode state.
 A stopped or hung application cannot answer Accessibility reads, so its peer
 cannot be read back. Such a peer counts as away only with direct evidence
 that its application stopped answering, and only while WindowServer does not
-show the window on screen. The evidence is the adapter's 2-second call hold
-after a timed-out call, or the last sweep leaving the application unread
-during its inventory backoff. The hold alone can expire while the
-application is still stopped, because a sweep in backoff does not message
-it. That WindowServer read
-asks no application. The pill then says that the application is not
+show the window on screen. The WindowServer read asks no application. Before
+a read, only the adapter's 2-second call hold after a timed-out call skips
+it. After a failed read, the evidence is that hold, or the last complete
+sweep leaving the application unread during its inventory backoff. The hold
+alone can expire while the application is still stopped, because a sweep in
+backoff does not message it. The sweep's unread set alone can be stale: an
+application that becomes active again releases the call hold at once, but
+the set changes only at the next complete sweep, so a recovered application
+is read before it is judged. The pill then says that the application is not
 responding and that Repair can bring the window back when it responds. A
 held application is not read again during the same check, so a hung
 application costs at most one timeout per check. A peer that the desktop
