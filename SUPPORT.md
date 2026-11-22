@@ -44,8 +44,3 @@ only a proposed control.
 ## Report a security problem
 
 Do not open a public issue. Follow [SECURITY.md](SECURITY.md).
-
-## Conduct
-
-Everyone who takes part in this project must follow the
-[Code of Conduct](CODE_OF_CONDUCT.md).
