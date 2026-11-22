@@ -12,11 +12,26 @@ is [SECURITY.md](../SECURITY.md).
 
 - **Apple Silicon Mac**
 - **macOS 26** or later
-- **Xcode 26 / Swift 6.3** or later, with its **Metal Toolchain** component.
+- **Xcode 26.6** or later, with its **Metal Toolchain** component. CI builds
+  with Xcode 26.6. Xcode 27 also builds the project. See
+  [Swift versions](#swift-versions).
   `BetterTileMacOS` precompiles a Metal shader. If a build fails with
   "missing Metal Toolchain", run `xcodebuild -downloadComponent MetalToolchain`
   once (about 840 MB).
 - A **free Apple ID** (no paid Apple Developer Program needed — see signing below)
+
+### Swift versions
+
+| Item | Value | Source |
+| --- | --- | --- |
+| Required Xcode | 26.6 or later | The version CI builds with |
+| Minimum Swift compiler | 6.3 | Included in Xcode 26.6 (Swift 6.3.3) |
+| Swift package tools version | 6.2 | `swift-tools-version` in `Package.swift` |
+| Language mode | Swift 6 | `swiftLanguageModes: [.v6]` in `Package.swift`; `SWIFT_VERSION = 6.0` in the Xcode project, which selects Swift 6 mode |
+
+The tools version is the oldest SwiftPM that can read `Package.swift`. It is
+not a supported compiler. Complete strict concurrency checking is on in the
+Xcode project.
 
 ---
 
@@ -601,24 +616,22 @@ failure and wait for a retry or a maintainer decision.
 
 ## 6. Automated review on pull requests
 
-- **Claude** checks each non-draft pull request against its stated goal and the
-  BetterTile repository rules. It reviews the pull request when it opens, when
-  a draft becomes ready, and when it receives new commits. It comments inline
-  on confirmed problems. You can write **`@claude`** in a comment to ask a
-  follow-up question.
-- **GPT/Codex** is available as a second opinion through ChatGPT. Write
-  **`@codex review`** in a PR comment to request a review, or enable automatic
-  reviews in [Codex settings](https://chatgpt.com/codex/settings/code-review).
+AI review is optional. It runs only when the maintainer asks for it, and it is
+never a required check.
 
-Repo maintainer setup for the Claude reviewer (one time):
+- The maintainer requests **Claude** with the `review:claude` label or an
+  `@claude` comment. Claude checks the pull request against its stated goal and
+  the BetterTile repository rules, and comments inline on confirmed problems.
+- The maintainer requests **Codex** with an `@codex review` comment through the
+  Codex GitHub app. Codex automatic review stays off.
+- Do not request a review yourself. See [CONTRIBUTING.md](../CONTRIBUTING.md)
+  for the full rules.
 
-1. Install the **Claude GitHub App** on the repository.
-2. Run `claude setup-token` locally (needs a Claude Pro/Max subscription) to
-   generate an OAuth token.
-3. Add it as a repository secret named **`CLAUDE_CODE_OAUTH_TOKEN`**
-   (Settings → Secrets and variables → Actions).
-
-The workflow lives at [.github/workflows/claude-review.yml](../.github/workflows/claude-review.yml).
+The Claude workflow is
+[.github/workflows/claude-review.yml](../.github/workflows/claude-review.yml).
+It uses a repository secret that only the maintainer holds. Contributors need
+no token or setup. The label review covers only pull requests from branches in
+this repository, because a pull request from a fork cannot read the secret.
 
 ---
 
