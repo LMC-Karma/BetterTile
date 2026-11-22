@@ -41,9 +41,9 @@ struct CopyDiagnosticsTests {
 
         let text = try #require(pasteboard.string(forType: .string))
         #expect(text.hasPrefix("BetterTile diagnostics\n"))
-        #expect(text.contains("Display 1 (main): 1000 × 800 pt, scale 2x, origin 0, 0\n"))
+        #expect(text.contains("Display 1 (primary, keyboard focus): 1000 × 800 pt, scale 2x, origin 0, 0\n"))
         #expect(text.contains("  Mode: Adaptive\n"))
-        #expect(text.contains("  Managed windows: 2, automatic floats: 0\n"))
+        #expect(text.contains("  Windows: 2, floating automatically: 0\n"))
         #expect(text.contains("Accessibility permission: Granted\n"))
         #expect(text.contains("Update checks: Manual\n"))
         #expect(text.contains("App rules: 1\n"))

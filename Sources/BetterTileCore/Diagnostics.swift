@@ -235,7 +235,13 @@ public struct DiagnosticsReport: Equatable, Sendable {
         ]
         for display in displays {
             let frame = display.frame
-            lines.append("Display \(display.index)\(display.isMain ? " (main)" : ""): "
+            // The primary display holds the menu bar and sits at the origin of
+            // top-left coordinates. `isMain` is the display with keyboard focus.
+            var roles: [String] = []
+            if frame.minX == 0, frame.minY == 0 { roles.append("primary") }
+            if display.isMain { roles.append("keyboard focus") }
+            let role = roles.isEmpty ? "" : " (\(roles.joined(separator: ", ")))"
+            lines.append("Display \(display.index)\(role): "
                 + "\(number(frame.size.width)) × \(number(frame.size.height)) pt, scale \(number(display.scaleFactor))x, "
                 + "origin \(number(frame.minX)), \(number(frame.minY))")
             guard let mode = display.mode else {
@@ -243,8 +249,8 @@ public struct DiagnosticsReport: Equatable, Sendable {
                 continue
             }
             lines.append("  Mode: \(mode.title)")
-            lines.append("  Managed windows: \(display.managedWindowCount), "
-                + "automatic floats: \(display.automaticFloatCount)")
+            lines.append("  Windows: \(display.managedWindowCount), "
+                + "floating automatically: \(display.automaticFloatCount)")
             lines.append("  Follows a Saved Layout: \(display.followsSavedLayout ? "Yes" : "No")")
             lines.append("  Automatic placement paused: \(display.automaticPlacementPaused ? "Yes" : "No")")
         }

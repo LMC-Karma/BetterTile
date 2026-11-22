@@ -66,9 +66,9 @@ import Testing
         Private APIs: On
 
         Displays: 2
-        Display 1 (main): 1512 × 982 pt, scale 2x, origin 0, 0
+        Display 1 (primary, keyboard focus): 1512 × 982 pt, scale 2x, origin 0, 0
           Mode: Adaptive
-          Managed windows: 3, automatic floats: 1
+          Windows: 3, floating automatically: 1
           Follows a Saved Layout: No
           Automatic placement paused: Yes
         Display 2: 1920 × 1080 pt, scale 1.5x, origin -1920, -98.5
@@ -122,6 +122,21 @@ import Testing
         #expect(text.contains("Layout Wheel keyboard trigger: Right Control\n"))
         #expect(text.contains("Layout Wheel mouse trigger: Off\n"))
         #expect(text.hasSuffix("Recent results, newest first\nNone\n"))
+    }
+
+    /// `DisplaySnapshot.isMain` follows keyboard focus, so it can be a display
+    /// other than the primary one. A live test found the report calling that
+    /// display "main" while macOS's main display was another.
+    @Test func separatesThePrimaryDisplayFromTheFocusedOne() {
+        var primary = main
+        primary.isMain = false
+        var focused = side
+        focused.isMain = true
+        let text = DiagnosticsReport(environment: environment, displays: [primary, focused], sessions: [:],
+                                     configuration: configuration(), recentResults: DiagnosticsResultLog()).text
+        #expect(text.contains("Display 1 (primary): 1512 × 982 pt"))
+        #expect(text.contains("Display 2 (keyboard focus): 1920 × 1080 pt"))
+        #expect(!text.contains("(main)"))
     }
 
     /// Product text names the modes Manual, Adaptive and Tabbed.
