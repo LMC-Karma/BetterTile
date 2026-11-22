@@ -1412,17 +1412,20 @@ A peer that does not come back stays known to the model, per desktop session:
 macOS refused its restore request, the peer was still away when the wait ended,
 or a newer action cancelled the wait first. The Restore command names the
 application in a pill with a fixed title, so an application name never selects
-the title. A refusal shows "Use Repair Layout" at once. A peer still read as
-minimized at the deadline shows "Layout partly restored": its window has not
-come back yet. A peer that is not minimized, for example one on another display,
-is not reported. Repair, including a mode command that chooses Adaptive, asks
-macOS to restore each recorded peer again, and the peers that Focus mode still
-covers. It waits for them with the same bounded wait before it lays out the
-display. A peer still read as minimized after that turns the result into
-"Layout partly applied", which names its application. A peer leaves the record
-when it is seen on screen, sends a restored or destroyed notification, or its
-application quits. The record ends when the desktop leaves Adaptive or a Saved
-Layout apply resets Focus mode state.
+the title. Restore reports only definite failures. A refusal shows "Use
+Repair Layout" at once. A peer whose application is not responding shows the
+same title, at once or at the deadline. A peer that is still minimized at the
+deadline is not reported, because an application can take longer to show its
+window; it stays recorded, and a window that arrives later joins the layout as
+usual. A peer that is not minimized, for example one on another display, is
+not reported either. Repair, including a mode command that chooses
+Adaptive, asks macOS to restore each recorded peer again, and the peers that
+Focus mode still covers. It waits for them with the same bounded wait
+before it lays out the display. A peer still read as minimized after that
+turns the result into "Layout partly applied", which names its application.
+A peer leaves the record when it is seen on screen, sends a restored or
+destroyed notification, or its application quits. The record ends when the
+desktop leaves Adaptive or a Saved Layout apply resets Focus mode state.
 
 A stopped or hung application cannot answer Accessibility reads, so its peer
 cannot be read back. Such a peer counts as away only with direct evidence

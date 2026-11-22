@@ -5736,26 +5736,22 @@ final class BetterTileModel {
         (system as? any WindowStackReading)?.windowServerPresence(for: windowIDs)
     }
 
-    /// The Restore result when a peer is still away at the end of the wait.
-    /// An application can show its window later, so a minimized peer is
-    /// not called stuck. Nil when no peer is away.
-    private func focusPeersNotBackFeedback(_ away: FocusPeersAway) -> ResultPillFeedback? {
-        guard !away.isEmpty else { return nil }
-        let minimized = away.minimized.isEmpty ? nil
-            : unreturnedFocusPeersMessage(away.minimized, stillAway: true)
-                + (away.minimized.count == 1 ? " Use Repair Layout if it stays away."
-                                             : " Use Repair Layout if they stay away.")
-        let notResponding = away.notResponding.isEmpty ? nil : notRespondingFocusPeersMessage(away.notResponding)
-        return .layoutResult(title: "Layout partly restored",
-                             detail: [minimized, notResponding].compactMap { $0 }.joined(separator: " "),
-                             kind: .warning, actions: [])
+    /// The Restore result at the end of the wait, for definite failures only:
+    /// a peer whose application is not responding. A peer that is still
+    /// minimized there gets no pill, because an application can take longer
+    /// to show its window. It stays recorded, so a later Repair tries it again
+    /// and reports it. Nil when no peer's application is not responding.
+    private func focusPeersNotRespondingFeedback(_ away: FocusPeersAway) -> ResultPillFeedback? {
+        guard !away.notResponding.isEmpty else { return nil }
+        // The same pill as a refusal whose application is not responding.
+        return .failure(title: "Use Repair Layout",
+                        detail: notRespondingFocusPeersMessage(away.notResponding, remedy: .tryAgain))
     }
 
     /// Names the applications whose Focus mode peers stayed minimized, such
     /// as "The TextEdit window stayed minimized."
-    private func unreturnedFocusPeersMessage(_ windowIDs: Set<WindowID>, stillAway: Bool = false) -> String {
-        Self.unreturnedFocusPeersMessage(names: focusPeerApplicationNames(windowIDs), windowCount: windowIDs.count,
-                                         stillAway: stillAway)
+    private func unreturnedFocusPeersMessage(_ windowIDs: Set<WindowID>) -> String {
+        Self.unreturnedFocusPeersMessage(names: focusPeerApplicationNames(windowIDs), windowCount: windowIDs.count)
     }
 
     /// Names the applications of peers that did not come back because they
@@ -5784,14 +5780,8 @@ final class BetterTileModel {
         return names
     }
 
-    /// - Parameter stillAway: True says the windows have not come back yet,
-    ///   for a wait that ended while an application may still show them.
-    nonisolated static func unreturnedFocusPeersMessage(
-        names: [String], windowCount: Int, stillAway: Bool = false
-    ) -> String {
-        let single = windowCount == 1
-        let predicate = stillAway ? (single ? "has not come back yet." : "have not come back yet.") : "stayed minimized."
-        return focusPeersSentence(names: names, windowCount: windowCount) { subject, _ in "\(subject) \(predicate)" }
+    nonisolated static func unreturnedFocusPeersMessage(names: [String], windowCount: Int) -> String {
+        focusPeersSentence(names: names, windowCount: windowCount) { subject, _ in "\(subject) stayed minimized." }
     }
 
     /// What a not-responding sentence tells the user to do.
@@ -5966,12 +5956,12 @@ final class BetterTileModel {
                         self.pendingWindowEvents.recordTopologyChange()
                         self.schedulePendingWindowEvents(expeditesArrival: true)
                     }
-                    // Report only a peer that is still away: read back as minimized,
-                    // or, when its application does not answer, off screen. A peer
-                    // on another display or Space is not reported as stuck.
+                    // Report only a definite failure: a peer whose application does
+                    // not answer and that is off screen. A slow application's peer
+                    // that is still minimized is not reported; it stays recorded.
                     let unreported = reportsUnreturnedPeers && result == .committed
                         ? self.focusPeersAway(unreturned.subtracting(reportedPeers), sessionID: sessionID) : FocusPeersAway()
-                    if let feedback = self.focusPeersNotBackFeedback(unreported) {
+                    if let feedback = self.focusPeersNotRespondingFeedback(unreported) {
                         self.statusMessage = feedback.detail
                         self.presentActionResult(succeeded: false, feedback: feedback, displayID: display.id)
                     }

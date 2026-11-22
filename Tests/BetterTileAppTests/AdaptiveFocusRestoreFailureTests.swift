@@ -35,12 +35,12 @@ func aFocusPeerThatDoesNotReturnIsNamedAndRepairTriesItAgain(
     }
     if !repairsWhileWaiting {
         await settleFocusRestore(model, system: system)
-        // The wait ended without the peer. Restore reports it by name, once.
+        // The wait ended without the peer. A refusal was reported once, by
+        // name. A peer that is only slow gets no pill beyond "Layout
+        // restored": its application can still show the window.
         let expected: ResultPillFeedback = failure == .refused
             ? .failure(title: "Use Repair Layout", detail: stuckMinimized)
-            : .layoutResult(title: "Layout partly restored",
-                            detail: "The \(stuckName) window has not come back yet. Use Repair Layout if it stays away.",
-                            kind: .warning, actions: [])
+            : .success("Layout restored")
         #expect(model.lastActionFeedback == expected, "\(feedbackText(model))")
     }
     let requestsBeforeRepair = system.restoreRequests.filter { $0 == stuck }.count
@@ -200,6 +200,29 @@ func aFocusPeerThatIsNotMinimizedAtTheDeadlineIsNotReported() async throws {
     #expect(model.lastActionFeedback == .success("Layout restored"), "\(feedbackText(model))")
 }
 
+/// An application can take longer than the 1.5 s wait to show its window.
+/// Restore shows only "Layout restored" for it. When the window arrives, it
+/// joins the layout, and a later Repair neither restores nor reports it.
+@Test(.appTestApplication, .timeLimit(.minutes(5))) @MainActor
+func aSlowPeerThatReturnsAfterTheDeadlineJoinsWithoutAReport() async throws {
+    let (system, model, stuck) = try await focusModeWithTwoPeers()
+    defer { model.shutdown() }
+    stuckPeerFails(.neverReturns, stuck: stuck, system: system)
+    model.perform(.restore)
+    await settleFocusRestore(model, system: system)
+    #expect(model.lastActionFeedback == .success("Layout restored"), "\(feedbackText(model))")
+
+    system.slowRestoreIDs = []
+    try system.setMinimized(false, for: stuck)
+    await settleFocusRestore(model, system: system)
+    #expect(fillsDisplay(system.windows, system: system), "\(system.windows.map(\.frame))")
+    let requests = system.restoreRequests.count
+    model.tileCurrentDisplay()
+    await settleFocusRestore(model, system: system)
+    #expect(system.restoreRequests.count == requests)
+    #expect(model.lastActionFeedback?.kind == .success, "\(feedbackText(model))")
+}
+
 /// A mode command that chooses Adaptive repairs the desktop. It cancels
 /// Restore's wait first, and the peer that wait was still waiting for must
 /// stay known, so this Repair tries it again and reports it.
@@ -243,10 +266,10 @@ func aFocusPeerWhoseApplicationDoesNotAnswerIsNamedAndReported(failure: FocusPee
                 "\(feedbackText(model))")
     }
     await settleFocusRestore(model, system: system)
-    let restoreResult: ResultPillFeedback = failure == .refused
-        ? .failure(title: "Use Repair Layout", detail: refusedNotResponding)
-        : .layoutResult(title: "Layout partly restored", detail: notResponding, kind: .warning, actions: [])
-    #expect(model.lastActionFeedback == restoreResult, "\(feedbackText(model))")
+    // Not responding is a definite failure, so the deadline reports it too,
+    // with the same pill as a refusal.
+    #expect(model.lastActionFeedback == .failure(title: "Use Repair Layout", detail: refusedNotResponding),
+            "\(feedbackText(model))")
 
     let reads = system.windowSnapshotRequests.count
     model.tileCurrentDisplay()
@@ -482,12 +505,6 @@ func aRefusedUnreadablePeerOfAnAnsweringApplicationIsNotReported(observesDesktop
     #expect(message(["TextEdit", "Terminal"], 2) == "The TextEdit and Terminal windows stayed minimized.")
     #expect(message(["TextEdit", "Terminal", "Finder"], 3)
         == "The TextEdit, Terminal, and 1 more windows stayed minimized.")
-    let away = { (names: [String], count: Int) in
-        BetterTileModel.unreturnedFocusPeersMessage(names: names, windowCount: count, stillAway: true)
-    }
-    #expect(away(["TextEdit"], 1) == "The TextEdit window has not come back yet.")
-    #expect(away(["TextEdit", "Terminal"], 2) == "The TextEdit and Terminal windows have not come back yet.")
-    #expect(away([], 1) == "A window has not come back yet.")
 }
 
 @MainActor private func expectRepairPartial(_ model: BetterTileModel, sourceLocation: SourceLocation = #_sourceLocation) {
