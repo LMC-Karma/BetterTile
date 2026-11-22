@@ -67,6 +67,8 @@ public struct DiagnosticsResultLog: Equatable, Sendable {
         "Shortcut layout repaired", "Stored Adaptive layout repaired",
         // Failures with fixed titles.
         "Couldn’t enter Tabbed", "Stopped waiting for a click",
+        // Focus mode warnings when a peer window does not come back.
+        "Layout partly restored", "Layout partly applied",
         // `ResultPillFeedback.failure(_:)` reduces every error to one of these.
         "Accessibility required", "App is ignored", "Tabbed not active", "Focus a tab to use tab commands.",
         "Adaptive not active", "No eligible window", "Adaptive is full", "Can’t fit this layout",
