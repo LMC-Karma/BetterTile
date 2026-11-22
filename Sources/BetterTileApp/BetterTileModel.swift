@@ -421,6 +421,11 @@ final class BetterTileModel {
     /// names them while they stay minimized. A peer leaves this set when it
     /// is seen again, is restored, or closes.
     private var unreturnedFocusPeers: [DesktopSessionID: Set<WindowID>] = [:]
+    /// The process of each unreturned peer, read when it was recorded. A
+    /// quit application's minimized window may never send a destroyed
+    /// notification, so its termination ends the record instead.
+    private var unreturnedFocusPeerProcesses: [WindowID: Int32] = [:]
+    private var lastBentoFocusFeedback: ResultPillFeedback?
     /// Finishes a layout command once Focus mode peers return, one per
     /// display. A newer layout action on the same display cancels it; an
     /// action on another display leaves it running.
@@ -434,13 +439,25 @@ final class BetterTileModel {
     private var focusRestoreSessionIDs: Set<DesktopSessionID> { Set(focusRestores.values.map(\.session.id)) }
 
     private var focusRestoreGeneration = 0
-    /// Nil cancels the restore on every display.
-    private func cancelPendingFocusRestore(on displayID: DisplayID?) {
+    /// Nil cancels the restore on every display. A cancelled wait has not
+    /// placed its peers, so each peer still away stays known, and the
+    /// next Repair tries it again.
+    private func cancelPendingFocusRestore(on displayID: DisplayID?, remembersPeers: Bool = true) {
+        let cancelled: [FocusRestore]
         if let displayID {
-            focusRestores.removeValue(forKey: displayID)?.task.cancel()
+            cancelled = focusRestores.removeValue(forKey: displayID).map { [$0] } ?? []
         } else {
-            focusRestores.values.forEach { $0.task.cancel() }
+            cancelled = Array(focusRestores.values)
             focusRestores.removeAll()
+        }
+        for restore in cancelled {
+            restore.task.cancel()
+            guard remembersPeers, !isShutDown else { continue }
+            let peers = restore.session.excludedFocusWindowIDs.subtracting(restore.closedWindowIDs)
+            guard !peers.isEmpty else { continue }
+            let snapshots = (try? system.windowSnapshots(ids: peers)) ?? []
+            let away = peers.filter { id in !snapshots.contains { $0.id == id && $0.isEligible } }
+            recordUnreturnedFocusPeers(away, sessionID: restore.session.id)
         }
     }
     /// The display a keyboard or menu action acts on.
@@ -936,6 +953,11 @@ final class BetterTileModel {
         tabbedExitRequests[displayID] = UUID()
         sessionStore.ensure(displayID: displayID, defaultMode: configuration.defaultLayoutMode)
         sessionStore.endRestorationOpportunity(on: displayID)
+        // Unreturned Focus mode peers belong to Adaptive. Another mode does
+        // not tile them, so Repair there must not restore or report them.
+        if mode != .bento, let sessionID = sessionStore.session(for: displayID)?.id {
+            forgetUnreturnedFocusPeers(sessionID: sessionID)
+        }
         if activeMode(for: displayID) == .tabbed, mode != .tabbed {
             leaveTabbed(displayID: displayID, destination: mode, focusedWindowID: focusedWindowID)
             return
@@ -1024,7 +1046,8 @@ final class BetterTileModel {
         }
         if let focused, let succeeded = performBentoFocusMode(action, window: focused) {
             presentActionResult(succeeded: succeeded, error: statusMessage,
-                                successMessage: lastBentoFocusMessage, displayID: focused.displayID)
+                                successMessage: lastBentoFocusMessage,
+                                feedback: succeeded ? nil : lastBentoFocusFeedback, displayID: focused.displayID)
             return
         }
         let actionPlan: WindowActionPlan
@@ -1189,7 +1212,8 @@ final class BetterTileModel {
             if let window = (try? system.windowSnapshots(ids: [plan.windowID]))?.first,
                let succeeded = performBentoFocusMode(plan.resolvedAction, window: window) {
                 presentActionResult(succeeded: succeeded, error: statusMessage,
-                                    successMessage: lastBentoFocusMessage, displayID: window.displayID)
+                                    successMessage: lastBentoFocusMessage,
+                                    feedback: succeeded ? nil : lastBentoFocusFeedback, displayID: window.displayID)
                 return
             }
             if let succeeded = performBentoDisplayTransfer(plan) {
@@ -3122,7 +3146,7 @@ final class BetterTileModel {
         cancelPaneApplicationRequest()
         for id in Array(completedRequestFocus.keys) { releaseCompletedRequestFocus(id) }
         paneApplicationArrivalGuards.removeAll()
-        cancelPendingFocusRestore(on: nil)
+        cancelPendingFocusRestore(on: nil, remembersPeers: false)
         for pid in Array(launchDiscoveries.keys) { endLaunchDiscovery(pid, reason: "shutdown") }
         guard !isShutDown else { return }
         paneGapRelayoutTask?.cancel()
@@ -3453,6 +3477,7 @@ final class BetterTileModel {
     /// Retires only the quitting process's arrivals and discovery. Arrivals and
     /// discoveries of other applications keep their own deadlines.
     func handleApplicationTermination(processIdentifier: Int32?) {
+        if let processIdentifier { forgetUnreturnedFocusPeers(ofProcess: processIdentifier) }
         refreshApplicationTopology(retiring: processIdentifier)
     }
 
@@ -5406,6 +5431,7 @@ final class BetterTileModel {
               !session.automaticWritesSuspended, session.windowIDs.contains(window.id),
               let display = system.displays().first(where: { $0.id == window.displayID }) else { return nil }
         lastBentoFocusMessage = nil
+        lastBentoFocusFeedback = nil
         if !session.excludedFocusWindowIDs.isEmpty {
             // Either action on the focused window ends Focus mode.
             let peers = session.excludedFocusWindowIDs
@@ -5417,7 +5443,10 @@ final class BetterTileModel {
             scheduleBentoFocusRestore(session: session, display: display, afterRestore: afterRestore,
                                       reportsUnreturnedPeers: afterRestore == nil, reportedPeers: refused)
             if !refused.isEmpty {
-                statusMessage = unreturnedFocusPeersMessage(refused) + " Use Repair Layout to try again."
+                // A fixed title: an application name must not pick the
+                // title by keyword, as a free-form failure reason does.
+                statusMessage = unreturnedFocusPeersMessage(refused)
+                lastBentoFocusFeedback = .failure(title: "Use Repair Layout", detail: statusMessage)
                 return false
             }
             lastBentoFocusMessage = "Layout restored"
@@ -5482,8 +5511,7 @@ final class BetterTileModel {
         recordUnreturnedFocusPeers([], returned: placedIDs, sessionID: sessionID)
         // Report only a peer read back as minimized. An unreadable peer can
         // have closed; it stays known without a report.
-        let minimized = Set(((try? system.windowSnapshots(ids: peers.subtracting(placedIDs))) ?? [])
-            .filter(\.isMinimized).map(\.id))
+        let minimized = minimizedWindowIDs(peers.subtracting(placedIDs))
         guard !minimized.isEmpty else { return nil }
         return .layoutResult(title: "Layout partly applied",
                              detail: unreturnedFocusPeersMessage(minimized)
@@ -5508,26 +5536,79 @@ final class BetterTileModel {
         _ unreturned: Set<WindowID>, returned: Set<WindowID> = [], sessionID: DesktopSessionID
     ) {
         var peers = unreturnedFocusPeers[sessionID] ?? []
+        let added = unreturned.subtracting(peers)
         peers.subtract(returned)
         peers.formUnion(unreturned)
         unreturnedFocusPeers[sessionID] = peers.isEmpty ? nil : peers
+        let unknown = added.filter { unreturnedFocusPeerProcesses[$0] == nil }
+        if !unknown.isEmpty {
+            for window in (try? system.windowSnapshots(ids: unknown)) ?? [] {
+                unreturnedFocusPeerProcesses[window.id] = window.processIdentifier
+            }
+        }
+        pruneUnreturnedFocusPeerProcesses()
+    }
+
+    private func forgetUnreturnedFocusPeers(sessionID: DesktopSessionID) {
+        guard unreturnedFocusPeers.removeValue(forKey: sessionID) != nil else { return }
+        pruneUnreturnedFocusPeerProcesses()
+    }
+
+    /// A quit application's windows cannot come back. Its minimized windows
+    /// may never send a destroyed notification, so its termination ends
+    /// their record.
+    private func forgetUnreturnedFocusPeers(ofProcess processIdentifier: Int32) {
+        let gone = Set(unreturnedFocusPeerProcesses.filter { $0.value == processIdentifier }.keys)
+        guard !gone.isEmpty else { return }
+        for sessionID in Array(unreturnedFocusPeers.keys) {
+            recordUnreturnedFocusPeers([], returned: gone, sessionID: sessionID)
+        }
+    }
+
+    private func pruneUnreturnedFocusPeerProcesses() {
+        guard !unreturnedFocusPeerProcesses.isEmpty else { return }
+        let recorded = unreturnedFocusPeers.values.reduce(into: Set<WindowID>()) { $0.formUnion($1) }
+        unreturnedFocusPeerProcesses = unreturnedFocusPeerProcesses.filter { recorded.contains($0.key) }
+    }
+
+    /// The windows read back as minimized. An unreadable window is left out.
+    private func minimizedWindowIDs(_ windowIDs: Set<WindowID>) -> Set<WindowID> {
+        guard !windowIDs.isEmpty else { return [] }
+        return Set(((try? system.windowSnapshots(ids: windowIDs)) ?? []).filter(\.isMinimized).map(\.id))
+    }
+
+    /// The Restore result when a peer is still minimized at the end of the
+    /// wait. An application can show its window later, so this does not
+    /// say that the window is stuck.
+    private func focusPeersNotBackFeedback(_ windowIDs: Set<WindowID>) -> ResultPillFeedback {
+        .layoutResult(title: "Layout partly restored",
+                      detail: unreturnedFocusPeersMessage(windowIDs, stillAway: true)
+                        + (windowIDs.count == 1 ? " Use Repair Layout if it stays away."
+                                                : " Use Repair Layout if they stay away."),
+                      kind: .warning, actions: [])
     }
 
     /// Names the applications whose Focus mode peers stayed minimized, such
     /// as "The TextEdit window stayed minimized."
-    private func unreturnedFocusPeersMessage(_ windowIDs: Set<WindowID>) -> String {
+    private func unreturnedFocusPeersMessage(_ windowIDs: Set<WindowID>, stillAway: Bool = false) -> String {
         let snapshots = (try? system.windowSnapshots(ids: windowIDs)) ?? []
         var names: [String] = []
         for window in snapshots.sorted(by: { $0.id < $1.id }) {
             if let name = Self.applicationName(of: window), !names.contains(name) { names.append(name) }
         }
-        return Self.unreturnedFocusPeersMessage(names: names, windowCount: windowIDs.count)
+        return Self.unreturnedFocusPeersMessage(names: names, windowCount: windowIDs.count, stillAway: stillAway)
     }
 
-    nonisolated static func unreturnedFocusPeersMessage(names: [String], windowCount: Int) -> String {
-        let noun = windowCount == 1 ? "window" : "windows"
+    /// - Parameter stillAway: True says the windows have not come back yet,
+    ///   for a wait that ended while an application may still show them.
+    nonisolated static func unreturnedFocusPeersMessage(
+        names: [String], windowCount: Int, stillAway: Bool = false
+    ) -> String {
+        let single = windowCount == 1
+        let noun = single ? "window" : "windows"
+        let predicate = stillAway ? (single ? "has not come back yet." : "have not come back yet.") : "stayed minimized."
         guard !names.isEmpty else {
-            return windowCount == 1 ? "A window stayed minimized." : "\(windowCount) windows stayed minimized."
+            return single ? "A window \(predicate)" : "\(windowCount) windows \(predicate)"
         }
         let shown = Array(names.prefix(2))
         let more = names.count - shown.count
@@ -5537,7 +5618,7 @@ final class BetterTileModel {
             case (_, 0): "\(titles[0]) and \(titles[1])"
             default: "\(titles[0]), \(titles[1]), and \(more) more"
             }
-            return "The \(list) \(noun) stayed minimized."
+            return "The \(list) \(noun) \(predicate)"
         }
     }
 
@@ -5668,11 +5749,15 @@ final class BetterTileModel {
                         self.pendingWindowEvents.recordTopologyChange()
                         self.schedulePendingWindowEvents(expeditesArrival: true)
                     }
-                    let unreported = unreturned.subtracting(reportedPeers)
-                    if reportsUnreturnedPeers, result == .committed, !unreported.isEmpty {
-                        self.statusMessage = self.unreturnedFocusPeersMessage(unreported)
-                            + " Use Repair Layout to try again."
-                        self.presentActionResult(succeeded: false, error: self.statusMessage, displayID: display.id)
+                    // Report only a peer read back as minimized. A peer on another
+                    // display or Space, or one an application has not shown
+                    // yet, is not reported as stuck.
+                    let unreported = reportsUnreturnedPeers && result == .committed
+                        ? self.minimizedWindowIDs(unreturned.subtracting(reportedPeers)) : []
+                    if !unreported.isEmpty {
+                        let feedback = self.focusPeersNotBackFeedback(unreported)
+                        self.statusMessage = feedback.detail
+                        self.presentActionResult(succeeded: false, feedback: feedback, displayID: display.id)
                     }
                     if let afterRestore {
                         self.focusRestores.removeValue(forKey: display.id)
@@ -9514,6 +9599,7 @@ extension BetterTileModel {
         spacePanelCorrections = spacePanelCorrections.filter { storedOwner($0) }
         bentoStateBeforeFocus = bentoStateBeforeFocus.filter { storedOwner($0.key) }
         unreturnedFocusPeers = unreturnedFocusPeers.filter { storedOwner($0.key) }
+        pruneUnreturnedFocusPeerProcesses()
         func displayOwner(_ id: DisplayID) -> Bool {
             connected.contains(id) || sessionStore.session(for: id) != nil || !sessionStore.allSessions(for: id).isEmpty
         }
@@ -10829,6 +10915,7 @@ extension BetterTileModel {
             session.tabbedHasEntryBaseline = false
             session.automaticallyFloatingWindowIDs = []
             session.excludedFocusWindowIDs = []
+            forgetUnreturnedFocusPeers(sessionID: session.id)
             session.bentoReinsertionAnchors = [:]
             switch plan.targetSession {
             case .manual: session.tabbedState = nil; session.bentoState = BentoLayoutState(); session.windowIDs = []
