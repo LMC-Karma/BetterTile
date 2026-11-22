@@ -110,4 +110,89 @@ import Testing
         #expect(editor.document?.name == "Imported")
         #expect(editor.url == nil && editor.sourceURL == file)
     }
+
+    @Test func settingsNewLayoutRefusalFromALibraryLayoutStartsNoDraft() throws {
+        let f = SavedLayoutDisplayPickerFixture(); defer { f.close() }
+        #expect(f.editor.save(as: "Library"))
+        let library = try #require(f.editor.url), source = f.editor.draft.source
+        let creation = f.editor.creation
+        #expect(!creation.isDraft)
+
+        failing(f.editor)
+        f.page.perform(.new(.init(name: "Writing", mode: .bento, preset: .columns)))
+        expectRefusal(f.editor, mentioning: "Couldn’t start a new layout")
+        #expect(!creation.isDraft)
+        #expect(!f.page.isEditing)
+        #expect(f.editor.url == library)
+        #expect(f.editor.draft.source == source)
+
+        // The refusal recorded no return URL: with none, cancel clears instead of reloading the library file.
+        f.editor.encodeLayout = SavedLayoutValidator.encode
+        #expect(creation.cancel(editor: f.editor))
+        #expect(f.editor.document == nil && f.editor.url == nil)
+    }
+
+    @Test func settingsNewLayoutRefusalDuringADraftKeepsItsReturnURL() throws {
+        let f = SavedLayoutDisplayPickerFixture(); defer { f.close() }
+        #expect(f.editor.save(as: "Library"))
+        let library = try #require(f.editor.url)
+        let creation = f.editor.creation
+        f.page.perform(.new(.init(name: "First draft", mode: .bento, preset: .columns)))
+        #expect(creation.isDraft && f.page.isEditing)
+        #expect(f.editor.url == nil && f.editor.document?.name == "First draft")
+        let draft = f.editor.draft.source
+
+        failing(f.editor)
+        f.page.perform(.new(.init(name: "Second draft", mode: .tabbed, preset: .grid)))
+        expectRefusal(f.editor, mentioning: "Couldn’t start a new layout")
+        #expect(creation.isDraft)
+        #expect(f.editor.draft.source == draft)
+        #expect(f.editor.document?.name == "First draft")
+
+        // Cancel still returns to the library layout that was open before the first draft.
+        f.editor.encodeLayout = SavedLayoutValidator.encode
+        #expect(creation.cancel(editor: f.editor))
+        #expect(!creation.isDraft)
+        #expect(f.editor.url == library && f.editor.document?.name == "Library")
+    }
+
+    @Test func completeImportRefusalKeepsTheDraftSourceLibraryAndGroups() async throws {
+        let root = temporaryDirectory(); defer { try? FileManager.default.removeItem(at: root) }
+        let store = AppGroupsStore(directory: root, catalog: { [] }, defaultBrowserURL: { nil })
+        await store.load()
+        let editor = SavedLayoutEditor(files: store.layouts)
+        #expect(editor.newLayout())
+        #expect(editor.save(as: "Current"))
+        let url = try #require(editor.url), source = editor.draft.source
+        let baseline = try editor.files.read(url), groups = store.document
+        editor.refreshLibrary()
+        let entries = editor.entries
+
+        let imported = SavedLayoutDocument(name: "Homework", mode: .bento, layout: .slot("a"),
+            slots: [.init(id: "a", prefer: [.group("Reading"), .app("com.apple.Safari")])])
+        let group = AppGroup(name: "Reading", apps: [.init(name: "Preview", bundleID: "com.apple.Preview")])
+        let file = root.appending(path: "export.json")
+        let exported = try SavedLayoutTransfer.encode(imported, groups: .init(groups: [group]))
+        try exported.write(to: file)
+        #expect(!editor.beginImport(file, groups: store))
+        #expect(editor.pendingImport?.choices == ["Reading": .add])
+
+        failing(editor)
+        #expect(!editor.completeImport(groups: store))
+        expectRefusal(editor, mentioning: "Couldn’t import")
+        #expect(editor.pendingImport != nil)
+        #expect(editor.url == url && editor.sourceURL == url)
+        #expect(editor.draft.source == source)
+        #expect(editor.document?.name == "Current")
+        #expect(editor.entries == entries)
+        #expect(try editor.files.read(url) == baseline)
+        #expect(store.document == groups)
+        #expect(try Data(contentsOf: file) == exported)
+
+        // The same pending import completes once encoding works again.
+        editor.encodeLayout = SavedLayoutValidator.encode
+        #expect(editor.completeImport(groups: store))
+        #expect(editor.document?.name == "Homework")
+        #expect(store.document.groups == [group])
+    }
 }
