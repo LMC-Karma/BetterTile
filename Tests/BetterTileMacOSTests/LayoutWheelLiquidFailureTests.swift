@@ -1,5 +1,6 @@
 import AppKit
 import Metal
+import BetterTileTestSupport
 import Testing
 #if !BETTERTILE_TEST_HOOKS
 #error("Tests require BETTERTILE_TEST_HOOKS. Use Tools/test.sh LOG --release for Release tests.")
@@ -261,10 +262,10 @@ import Testing
         let target = LayoutWheelTarget(windowID: .init(rawValue: "fixture"), displayID: .init(rawValue: "display"),
                                       visibleFrame: .init(x: -30_000, y: -30_000, width: 1600, height: 1000))
         var pointer = BTPoint(x: -29_200, y: -29_500)
-        var time = 0.0
+        let time = MainActorBox(0.0)
         let controller = LayoutWheelController(
             configuration: .init(layoutWheel: .init(style: .grouped, levelCount: .two)), presenter: adapter,
-            now: { time }, pointerProvider: { pointer }, addGlobalMonitor: { _, _ in NSObject() },
+            now: { time.value }, pointerProvider: { pointer }, addGlobalMonitor: { _, _ in NSObject() },
             addLocalMonitor: { _, _ in NSObject() }, removeMonitor: { _ in })
         controller.savedLayouts = configuration.savedLayouts
         controller.captureHandler = { _ in target }
@@ -287,7 +288,7 @@ import Testing
             controller.handlePointer(pointer)
         }
         move(.init(x: cos(angle) * radius, y: sin(angle) * radius))
-        time += 0.21
+        time.value += 0.21
         controller.handleFanDeadline()
         var attempts = 0
         renderer.makeAtlas = { _, _, _ in attempts += 1; return nil }
@@ -380,10 +381,10 @@ import Testing
         let target = LayoutWheelTarget(windowID: .init(rawValue: "fixture"), displayID: .init(rawValue: "display"),
                                       visibleFrame: .init(x: -30_000, y: -30_000, width: 1600, height: 1000))
         var pointer = BTPoint(x: -29_200, y: -29_500)
-        var time = 0.0
+        let time = MainActorBox(0.0)
         let controller = LayoutWheelController(
             configuration: .init(layoutWheel: .init(style: .grouped, levelCount: .two)), presenter: adapter,
-            now: { time }, pointerProvider: { pointer }, addGlobalMonitor: { _, _ in NSObject() },
+            now: { time.value }, pointerProvider: { pointer }, addGlobalMonitor: { _, _ in NSObject() },
             addLocalMonitor: { _, _ in NSObject() }, removeMonitor: { _ in })
         controller.captureHandler = { _ in target }
         controller.previewHandler = { _, _ in .ready(placements: []) }
@@ -405,7 +406,7 @@ import Testing
             controller.handlePointer(pointer)
         }
         move(.init(x: cos(angle) * radius, y: sin(angle) * radius))
-        time += 0.21
+        time.value += 0.21
         controller.handleFanDeadline()
         var attempts = 0
         renderer.makeAtlas = { _, _, _ in attempts += 1; return nil }

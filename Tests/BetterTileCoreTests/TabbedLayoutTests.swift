@@ -87,7 +87,8 @@ func tabbedRepeatedTransfersDoNotDependOnTabOrder(order: [String], selectedIndex
             #expect(state.activeWindowID == tab)
             #expect(state.panes[1].selected == tab)
         }
-        state.move(moving, to: left, at: try #require(tabs.firstIndex(of: moving)))
+        let index = try #require(tabs.firstIndex(of: moving))
+        state.move(moving, to: left, at: index)
         for tab in tabs {
             state.select(tab)
             #expect(state.activeWindowID == tab)

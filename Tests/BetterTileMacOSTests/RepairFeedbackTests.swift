@@ -78,7 +78,7 @@ import Testing
         #expect(needed > 0)
         #expect(needed <= shown)
         #expect(label.stringValue == reason)
-        #expect(label.accessibilityValue() as? String == reason)
+        #expect(label.accessibilityValue() == reason)
         print("REPAIR_FEEDBACK_LAYOUT lines=\(lines) textWidth=\(textWidth) frame=\(frame) shown=\(shown) needed=\(needed) reason=\(reason)")
     }
 }

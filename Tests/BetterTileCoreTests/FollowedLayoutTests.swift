@@ -33,9 +33,10 @@ import Testing
         case let .tabbed(state): session.tabbedState = state
         case .manual: Issue.record("Expected managed target")
         }
-        session.followed = try #require(FollowedLayout.make(layoutFileID: "Work.json", document: document, plan: plan,
+        let followed = try #require(FollowedLayout.make(layoutFileID: "Work.json", document: document, plan: plan,
             expandedPreferences: Dictionary(uniqueKeysWithValues: slots.enumerated().map { ($0.element.id, preferences[$0.offset]) }),
             session: session))
+        session.followed = followed
         return (document, plan, session)
     }
 

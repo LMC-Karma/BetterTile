@@ -103,7 +103,7 @@ struct ArrivalLatencyRegressionTests {
         system.failedVisibleWindowSweeps = [system.completeSweepCount + 1]
         system.eventHandler?(WindowSystemEvent(kind: .moved, windowID: system.windows[0].id, processIdentifier: system.windows[0].processIdentifier))
         await system.joinWindowEvent(on: model)
-        try #require(model.windowEventTask)
+        _ = try #require(model.windowEventTask)
         let count = system.completeSweepCount
         created(system, add("after-failed-read", system))
         await system.advance(by: .milliseconds(40))

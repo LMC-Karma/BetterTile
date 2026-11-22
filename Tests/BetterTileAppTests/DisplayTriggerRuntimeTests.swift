@@ -829,7 +829,8 @@ func deletedTriggerLayoutsReleaseLastRunsWithoutLosingExistingOrBoundLayouts() {
         try store.save(configuration)
         let model = makeOffscreenModel(store: store, system: h.system, startRuntime: false)
         h.runtime.stop()
-        h.applier = try #require(model.savedLayoutApplier)
+        let applier = try #require(model.savedLayoutApplier)
+        h.applier = applier
         h.applier.observesKeyboard = false; h.applier.prepareAppGroups = {}
         h.applier.application = { id in .init(bundleIdentifier: id, name: id, url: URL(filePath: "/fixture/\(id).app")) }
         h.applier.feedback = { [unowned h] in h.feedback.append($0) }
@@ -868,7 +869,8 @@ func deletedTriggerLayoutsReleaseLastRunsWithoutLosingExistingOrBoundLayouts() {
         try store.save(configuration)
         let model = makeOffscreenModel(store: store, system: h.system, startRuntime: false)
         h.runtime.stop()
-        h.applier = try #require(model.savedLayoutApplier)
+        let applier = try #require(model.savedLayoutApplier)
+        h.applier = applier
         h.applier.observesKeyboard = false; h.applier.prepareAppGroups = {}
         h.applier.application = { id in .init(bundleIdentifier: id, name: id, url: URL(filePath: "/fixture/\(id).app")) }
         h.applier.feedback = { [unowned h] in h.feedback.append($0) }

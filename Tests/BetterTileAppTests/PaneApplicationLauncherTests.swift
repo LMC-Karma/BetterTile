@@ -2138,8 +2138,8 @@ func paneLauncherConcurrentRequestsDoNotReplaceUserChoice(reverseCompletion: Boo
     var front = "Source"
     var restored: [String] = []
     var keys: UInt32 = 0
-    model.paneApplicationRequestFocusFactory = {
-        ApplicationRequestFocus(frontmost: { front }, keyboardEventCount: { keys }, restoreFrontmost: { [weak model] app in
+    model.paneApplicationRequestFocusFactory = { [weak model] in
+        ApplicationRequestFocus(frontmost: { front }, keyboardEventCount: { keys }, restoreFrontmost: { app in
             restored.append(app)
             front = app
             model?.requestApplicationActivated(app)

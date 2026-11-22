@@ -1,6 +1,7 @@
 import AppKit
 import BetterTileCore
 import SwiftUI
+import Synchronization
 import Testing
 @testable import BetterTileApp
 @testable import BetterTileMacOS
@@ -136,11 +137,11 @@ import Testing
     @Test func hostedBindingSnapsBackWhenTheModelRefusesAMode() throws {
         _ = NSApplication.shared
         var selected = LayoutMode.manual
-        var acceptsRequest = false
+        let acceptsRequest = Mutex(false)
         var requests: [LayoutMode] = []
         let binding = Binding(get: { selected }, set: { mode in
             requests.append(mode)
-            if acceptsRequest { selected = mode }
+            if acceptsRequest.withLock({ $0 }) { selected = mode }
         })
         let host = NSHostingView(rootView: MenuPanelModePicker(selection: binding).frame(width: 284))
         host.frame = NSRect(x: 0, y: 0, width: 284, height: 40)
@@ -149,7 +150,7 @@ import Testing
         try performNativeClick(control.buttons[2])
         #expect(requests == [.tabbed] && selected == .manual)
         #expect(control.selection == .manual && control.buttons[0].isSelected)
-        acceptsRequest = true
+        acceptsRequest.withLock { $0 = true }
         try performNativeClick(control.buttons[1])
         #expect(requests == [.tabbed, .bento] && selected == .bento)
         #expect(control.selection == .bento && control.buttons[1].isSelected)

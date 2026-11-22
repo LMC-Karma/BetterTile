@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import BetterTileTestSupport
 import Testing
 @testable import BetterTileCore
 @testable import BetterTileMacOS
@@ -222,8 +223,8 @@ import Testing
         let clock = WheelTestClock()
         let renderer = LayoutWheelGlassRenderer(clock: clock)
         defer { renderer.stop() }
-        var options = LayoutWheelDisplayOptions(reduceMotion: true, reduceTransparency: true, increaseContrast: false)
-        renderer.displayOptions = { options }
+        let options = MainActorBox(LayoutWheelDisplayOptions(reduceMotion: true, reduceTransparency: true, increaseContrast: false))
+        renderer.displayOptions = { options.value }
         let input = LayoutWheelSceneInput(configuration: .init(levelCount: .one),
                                           selection: .init(ring: .inner, sector: .top))
         renderer.configure(input, newOpen: true)
@@ -251,14 +252,14 @@ import Testing
         let fill = try #require(NSBitmapImageRep(cgImage: referenceImage).colorAt(x: 1, y: 1)?.usingColorSpace(.sRGB))
         #expect(abs(solid.redComponent - fill.redComponent) < 0.01, "solid \(solid.redComponent) expected \(fill.redComponent)")
 
-        options.reduceTransparency = false
+        options.value.reduceTransparency = false
         NSWorkspace.shared.notificationCenter.post(
             name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil)
         #expect(renderer.usesGlass)
         #expect(renderer.hosting?.rootView.reduceTransparency == false)
         #expect(renderer.input == input)
 
-        options.reduceTransparency = true
+        options.value.reduceTransparency = true
         NSWorkspace.shared.notificationCenter.post(
             name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil)
         #expect(!renderer.usesGlass)
