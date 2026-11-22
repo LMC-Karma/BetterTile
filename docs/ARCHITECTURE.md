@@ -1408,6 +1408,16 @@ wait. After a committed or stale restore, an ordinary topology pass measures
 arrivals before their first placement without waiting for another notification.
 Rejected or degraded restores leave them unprobed and unmoved until Repair.
 
+A peer that does not come back stays known to the model, per desktop session:
+macOS refused its restore request, or it was still minimized or unread when the
+wait ended. The Restore command names its application: at once for a refusal,
+and at the deadline for a peer that is still away. Repair asks macOS to restore each such
+peer again, and the peers that Focus mode still covers, then waits for them
+with the same bounded wait before it lays out the display. A peer that still
+stays minimized turns the Repair into a partial result that names its
+application. A peer leaves this record when it is seen on screen, sends a
+restored notification, or closes.
+
 Keyboard and captured Layout Wheel partitions use the same peer-return wait.
 When all peers are visible, the partition runs synchronously. Otherwise it
 keeps the original target and replans after the peers return or the 1.5-second

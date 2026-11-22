@@ -543,7 +543,7 @@ func authoritativeSettlementBoundsEachFrameComponent(difference: Double, compone
     system.windows[2].isMinimized = true
     let coordinator = WindowCoordinator(system: system)
 
-    #expect(coordinator.restoreFocusDropPeers([system.windows[1].id, thirdID]).isApplied)
+    #expect(coordinator.restoreFocusDropPeers([system.windows[1].id, thirdID]).isEmpty)
     #expect(system.windows[1].isMinimized == false)
     #expect(system.windows[2].isMinimized == false)
 }
@@ -564,11 +564,9 @@ func authoritativeSettlementBoundsEachFrameComponent(difference: Double, compone
     system.failingMinimizeWindowID = failingID
     let coordinator = WindowCoordinator(system: system)
 
-    guard case let .failed(reason) = coordinator.restoreFocusDropPeers([failingID, thirdID]) else {
-        Issue.record("an incomplete peer restore must report failure")
-        return
-    }
-    #expect(reason == WindowSystemError.operationFailed("Simulated minimize failure").localizedDescription)
+    // Each refused peer is reported with its own reason, so the caller can name it.
+    #expect(coordinator.restoreFocusDropPeers([failingID, thirdID])
+        == [failingID: WindowSystemError.operationFailed("Simulated minimize failure").localizedDescription])
     // Best-effort by design: the peer that restored stays restored.
     #expect(system.windows[2].isMinimized == false)
     #expect(system.windows[1].isMinimized == true)
