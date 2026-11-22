@@ -225,10 +225,13 @@ func choosingAdaptiveDuringRestoresWaitTriesTheMissingPeerAgain() async throws {
 func aFocusPeerWhoseApplicationDoesNotAnswerIsNamedAndReported(failure: FocusPeerFailure) async throws {
     let (system, model, stuck) = try await focusModeWithTwoPeers()
     defer { model.shutdown() }
-    model.applicationNameForProcess = { $0 == 44 ? "Stopped Fixture" : nil }
-    let notResponding = "The Stopped Fixture window did not come back. Stopped Fixture is not responding."
-    // The application stops: every read of its window fails from now on.
+    model.applicationNameForProcess = { $0.processIdentifier == 44 ? "Stopped Fixture" : nil }
+    let notResponding = "Stopped Fixture is not responding, so its window did not come back. "
+        + "Use Repair Layout when it responds."
+    // The application stops: every read of its window fails from now on,
+    // and its calls wait out their timeouts, which holds it as unresponsive.
     system.unreadableAfterWrites[stuck] = 0
+    system.unresponsiveWindowIDs = [stuck]
     stuckPeerFails(failure, stuck: stuck, system: system)
 
     model.perform(.restore)
@@ -242,9 +245,12 @@ func aFocusPeerWhoseApplicationDoesNotAnswerIsNamedAndReported(failure: FocusPee
         : .layoutResult(title: "Layout partly restored", detail: notResponding, kind: .warning, actions: [])
     #expect(model.lastActionFeedback == restoreResult, "\(feedbackText(model))")
 
+    let reads = system.windowSnapshotRequests.count
     model.tileCurrentDisplay()
     #expect(await system.waitFor(timeout: .seconds(6)) { model.lastActionFeedback?.message == repairPartial },
             "\(feedbackText(model))")
+    // A held application is not asked again: each read would wait out a timeout.
+    #expect(!system.windowSnapshotRequests.dropFirst(reads).contains { $0.contains(stuck) })
     await settleFocusRestore(model, system: system)
     #expect(model.lastActionFeedback == .layoutResult(title: repairPartial, detail: notResponding,
                                                       kind: .warning, actions: []), "\(feedbackText(model))")
@@ -252,6 +258,7 @@ func aFocusPeerWhoseApplicationDoesNotAnswerIsNamedAndReported(failure: FocusPee
 
     // The application answers again: Repair brings the peer back.
     system.unreadableAfterWrites = [:]
+    system.unresponsiveWindowIDs = []
     system.failedRestoreWindowIDs = []
     system.slowRestoreIDs = []
     model.tileCurrentDisplay()
@@ -276,6 +283,7 @@ func anUnreadablePeerOnScreenIsNotReported() async throws {
     let index = try #require(system.windows.firstIndex { $0.id == stuck })
     system.windows[index].isMinimized = false
     system.unreadableAfterWrites[stuck] = 0
+    system.unresponsiveWindowIDs = [stuck]
     // The inventory sweep cannot read the hung application either.
     system.applicationHoldsUntil[44] = 1_000_000
     system.failedRestoreWindowIDs = []
@@ -289,17 +297,64 @@ func anUnreadablePeerOnScreenIsNotReported() async throws {
     #expect(model.lastActionFeedback?.kind == .success, "\(feedbackText(model))")
 }
 
+/// A peer the user moved to another Space, or that opened in its own
+/// full-screen Space, cannot be read and is off screen, like a hung peer.
+/// Its application still answers, so it is not reported, and Repair leaves
+/// it alone.
+@Test(.appTestApplication, .timeLimit(.minutes(5)), arguments: [false, true]) @MainActor
+func aFocusPeerOnAnotherSpaceIsNotReported(fullScreen: Bool) async throws {
+    let (system, model, stuck) = try await focusModeWithTwoPeers(observesDesktops: true)
+    defer { model.shutdown() }
+    stuckPeerFails(.neverReturns, stuck: stuck, system: system)
+    model.perform(.restore)
+    // The window returns on another Space. Like the adapter, the fake then
+    // hides it from Accessibility reads, and WindowServer shows it off screen.
+    let other = NativeSpaceID(rawValue: fullScreen ? 3 : 2)
+    system.simulatesNativeClassification = true
+    system.desktopObservation?.knownSpacesByDisplay[system.mainDisplay.id]?.insert(other)
+    if fullScreen { system.desktopObservation?.fullscreenSpaceIDs.insert(other) }
+    system.desktopObservation?.windowMembership[stuck] = [other]
+    let index = try #require(system.windows.firstIndex { $0.id == stuck })
+    system.windows[index].isMinimized = false
+    await settleFocusRestore(model, system: system)
+    #expect(model.lastActionFeedback == .success("Layout restored"), "\(feedbackText(model))")
+
+    let requests = system.restoreRequests.filter { $0 == stuck }.count
+    model.tileCurrentDisplay()
+    await settleFocusRestore(model, system: system)
+    #expect(model.lastActionFeedback?.kind == .success, "\(feedbackText(model))")
+    #expect(system.restoreRequests.filter { $0 == stuck }.count == requests)
+}
+
+/// A process number can be reused after a missed termination. The name
+/// lookup must then not name the other application.
+@Test(.appTestApplication) @MainActor func aReusedProcessNumberDoesNotNameAnotherApplication() async throws {
+    _ = NSApplication.shared
+    let model = makeModel(system: makeManualWindowSystem())
+    defer { model.shutdown() }
+    let current = ProcessInfo.processInfo.processIdentifier
+    let running = try #require(RunningApplicationLookup.application(processIdentifier: current))
+    #expect(model.applicationNameForProcess(.init(processIdentifier: current,
+        bundleIdentifier: "com.example.Other", knowsBundleIdentifier: true)) == nil)
+    #expect(model.applicationNameForProcess(.init(processIdentifier: current,
+        bundleIdentifier: running.bundleIdentifier, knowsBundleIdentifier: true)) != nil)
+    #expect(model.applicationNameForProcess(.init(processIdentifier: current)) != nil)
+}
+
 @Test func aNotRespondingFocusPeerMessageNamesTheApplication() {
     let message = { (names: [String], count: Int) in
         BetterTileModel.notRespondingFocusPeersMessage(names: names, windowCount: count)
     }
-    #expect(message(["TextEdit"], 1) == "The TextEdit window did not come back. TextEdit is not responding.")
-    #expect(message(["TextEdit", "Terminal"], 2)
-        == "The TextEdit and Terminal windows did not come back. TextEdit and Terminal are not responding.")
-    #expect(message(["A", "B", "C"], 3)
-        == "The A, B, and 1 more windows did not come back. Their applications are not responding.")
-    #expect(message([], 1) == "A window did not come back. Its application is not responding.")
-    #expect(message([], 2) == "2 windows did not come back. Their applications are not responding.")
+    #expect(message(["TextEdit"], 1)
+        == "TextEdit is not responding, so its window did not come back. Use Repair Layout when it responds.")
+    #expect(message(["TextEdit"], 2)
+        == "TextEdit is not responding, so its windows did not come back. Use Repair Layout when it responds.")
+    #expect(message(["TextEdit", "Terminal"], 2) == "TextEdit and Terminal are not responding, "
+        + "so their windows did not come back. Use Repair Layout when they respond.")
+    #expect(message(["A", "B", "C"], 3) == "A, B, and 1 more are not responding, "
+        + "so their windows did not come back. Use Repair Layout when they respond.")
+    #expect(message([], 1)
+        == "An application is not responding, so its window did not come back. Use Repair Layout when it responds.")
 }
 
 @Test func anUnreturnedFocusPeerMessageNamesEachApplicationOnce() {
@@ -408,7 +463,9 @@ extension FakeAppWindowSystem: WindowStackReading {
     func windowServerPresence(for ids: Set<WindowID>) -> [WindowID: WindowServerPresence]? {
         Dictionary(uniqueKeysWithValues: windows.filter { ids.contains($0.id) }.map { window in
             (window.id, WindowServerPresence(
-                isOnScreen: !window.isMinimized && !window.isHidden && !offscreenWindowIDs.contains(window.id),
+                isOnScreen: !window.isMinimized && !window.isHidden && !offscreenWindowIDs.contains(window.id)
+                    // WindowServer lists a window on another Space as off screen.
+                    && desktopObservation.map { !$0.windowsOnCurrentSpaces([window]).isEmpty } != false,
                 processIdentifier: window.processIdentifier))
         })
     }
