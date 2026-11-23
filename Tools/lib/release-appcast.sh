@@ -67,7 +67,7 @@ validate_appcast_release() {
     return 0
 }
 
-# Sparkle 2.9.5 infers this from the executable. Fail closed if generation or
+# Sparkle 2.10.1 infers this from the executable. Fail closed if generation or
 # reuse of an existing item ever loses the requirement for this exact build.
 validate_arm64_appcast() {
     local appcast="$1" build="$2" count
