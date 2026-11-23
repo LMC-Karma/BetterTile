@@ -4,8 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "python3 -u -m http.server 4188 --bind 127.0.0.1",
-    "build": "node --check redesign.js && node --check export-assets.js && node build.mjs && node check.mjs",
-    "release": "node release.mjs"
+    "build": "node --check redesign.js && node --check export-assets.js && node build.mjs && node check.mjs"
   },
   "engines": {
     "node": ">=22"

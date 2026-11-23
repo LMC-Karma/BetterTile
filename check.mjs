@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile, access, readdir } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import { brand, comparison, media, gifs, release } from './content.mjs';
+import { brand, comparison, media, gifs, DOWNLOAD_URL } from './content.mjs';
 for(const file of ['index.html','brand.html','export.html','404.html','acknowledgements.html']){
   const html=await readFile(file,'utf8');
   assert.equal((html.match(/<h1[\s>]/g)||[]).length,1,`${file}: one main heading`);
@@ -48,17 +48,23 @@ const ldMatch=html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/scri
 assert(ldMatch,'JSON-LD present');
 const ld=JSON.parse(ldMatch[1]);
 assert.equal(ld['@type'],'SoftwareApplication');assert.equal(ld.operatingSystem,'macOS 26 or later');assert.equal(ld.applicationCategory,'UtilitiesApplication');
-assert.equal(ld.offers.price,'0');assert.equal(ld.downloadUrl,brand.links.download);assert.equal(ld.softwareVersion,release.latest.tag.replace(/^v/,''));
+assert.equal(ld.offers.price,'0');assert.equal(ld.downloadUrl,DOWNLOAD_URL);assert(!('softwareVersion' in ld),'JSON-LD lists no version');
 assert.match(await readFile('robots.txt','utf8'),/^Sitemap: https:\/\/lmc-karma\.github\.io\/BetterTile\/sitemap\.xml$/m);
 assert((await readFile('sitemap.xml','utf8')).includes(`<loc>${brand.site}</loc>`));
 await access('favicon.ico');
-// The page text must not carry an older release as the latest one.
-const older=release.recent.slice(1).map(r=>r.version.replace(' beta',''));
-for(const version of older)assert(!html.includes(`Version ${version}`),`Page does not present ${version} as current`);
+// No release-specific facts: the site must not show a version, date or size that can go stale.
+const visible=html.replace(/<(script|style|svg)[\s\S]*?<\/\1>/g,'').replace(/<[^>]+>/g,' ');
+assert(!/\b0\.[6-9]\b/.test(visible),'Visible text names no 0.6+ version'); // 0.5.2 stays: the last Intel release.
+assert(!/Version \d|\d+(?:\.\d)? MB disk image|>Latest</.test(html),'No version, size or Latest badge');
 assert(!/\$\s?\d|US\$/i.test(html.slice(html.indexOf('comparison-section'),html.indexOf('id="start"'))),'Comparison shows no third-party prices');
 assert.equal(comparison.length,4);
-assert.match(brand.links.download,/^https:\/\/github\.com\/LMC-Karma\/BetterTile\/releases\/download\/v[\d.]+(-beta)?\/BetterTile-[\d.]+(-beta)?\.dmg$/,'Download links the latest disk image');
-assert(html.includes(brand.links.download)&&html.includes(`Version ${brand.version}`),'Page shows the release from release.json');
+// Every Download link is the single stable constant from content.mjs.
+assert.equal(brand.links.download,DOWNLOAD_URL);
+assert.match(DOWNLOAD_URL,/^https:\/\/github\.com\/LMC-Karma\/BetterTile\/releases\/latest(?:\/download\/BetterTile\.dmg)?$/,'Download link is a latest-release URL');
+const downloads=[...html.matchAll(/<a href="([^"]+)"[^>]*>(?:Download|Download for Mac|Download the disk image)\b/g)].map(m=>m[1]);
+assert(downloads.length>=5,'Download buttons found');
+for(const url of downloads)assert.equal(url,DOWNLOAD_URL,'Every Download link uses the stable constant');
+assert(!html.includes('/releases/download/'),'No version-specific download link');
 for(const slot of Object.values(media)){
   assert.equal(slot.kind,'video');
   assert(slot.width===1920&&slot.height===1080);

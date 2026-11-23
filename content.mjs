@@ -1,14 +1,16 @@
-import release from './release.json' with { type: 'json' };
-export { release };
 // Product facts and public copy. Build again after editing.
+// The one place that decides what every Download button opens. It is the latest-release page, so the site never
+// shows an old disk image or version. After a release uploads the fixed-name asset BetterTile.dmg, change it to
+// 'https://github.com/LMC-Karma/BetterTile/releases/latest/download/BetterTile.dmg' for a direct download.
+export const DOWNLOAD_URL = 'https://github.com/LMC-Karma/BetterTile/releases/latest';
 export const brand = {
   name: 'BetterTile', headline: ['Your windows.', 'Working together.'],
   get tagline() { return this.headline.join(' '); },
   description: 'A free, native macOS window manager. Snap windows into place, resize neighbours together, let Adaptive tiling make room as your work grows, and bring a desktop back with Saved Layouts.',
-  requirement: 'Apple silicon Mac, macOS 26 or later', version: release.latest.version, checked: '22 November 2026',
+  requirement: 'Apple silicon Mac, macOS 26 or later', checked: '22 November 2026',
   site: 'https://lmc-karma.github.io/BetterTile/',
   links: {
-    download: release.latest.dmg,
+    download: DOWNLOAD_URL,
     latest: 'https://github.com/LMC-Karma/BetterTile/releases/latest',
     github: 'https://github.com/LMC-Karma/BetterTile',
     docs: 'https://github.com/LMC-Karma/BetterTile/blob/main/README.md',
@@ -16,8 +18,7 @@ export const brand = {
     security: 'https://github.com/LMC-Karma/BetterTile/blob/main/SECURITY.md',
     releases: 'https://github.com/LMC-Karma/BetterTile/releases',
     issues: 'https://github.com/LMC-Karma/BetterTile/issues',
-    limitations: `https://github.com/LMC-Karma/BetterTile/blob/main/docs/releases/${release.latest.tag.replace(/^v/, '')}.md`,
-    notes: release.latest.notes,
+    limitations: 'https://github.com/LMC-Karma/BetterTile/releases/latest',
     license: 'https://github.com/LMC-Karma/BetterTile/blob/main/LICENSE',
   },
   assets: { symbol: 'assets/identity/symbol-reversed.svg', icon: 'assets/identity/app-icon-native-dark-128.png', iconLight: 'assets/identity/app-icon-native-light-128.png', iconLarge: 'assets/identity/app-icon-native-dark-256.png', iconLightLarge: 'assets/identity/app-icon-native-light-256.png', video: 'assets/media/overview.mp4', poster: 'assets/media/overview.jpg' },
@@ -33,7 +34,7 @@ export const copy = {
   tabbed: { title: ['More within reach.', 'Less on the surface.'], body: 'Tabbed groups windows in resizable panes. Select a tab to bring its window forward. Drag tabs between panes, or drag a floating window into a pane as a tab.', detail: 'Turn off Stage Manager for Tabbed. Pane assignments last for the current app session.', extra: { title: 'Layout Gallery', body: 'Open the Layout Gallery from a tab bar’s … menu. It shows a picture of each layout. The + button in a pane opens an app straight into it, and tab bars can hide until you point at them.' } },
   wheel: { title: ['Your next move.', 'Within reach.'], detail: 'In a One Level wheel, the bottom sector is Repair Layout. Escape or the center cancels. Optional middle click reserves that button system-wide while enabled.', extra: { title: 'Grouped style', body: 'Choose Grouped for groups such as Size, Thirds, Displays, Mode and Choose Layout, each with its own fan of commands. Or keep Custom, with one or two levels. The wheel can change a desktop’s mode, choose a Tabbed layout and apply Saved Layouts.' } },
   keyboard: { title: ['Keep your hands', 'on the keys.'], body: 'Place windows with global shortcuts. Undo a placement when you want to try another arrangement.', detail: 'Give each command its keys on the Shortcuts page in Settings, with duplicate checks.' },
-  more: { title: ['Also new', 'in 0.6.'], body: 'Two more changes from the 0.6 beta series. The release notes list the rest.', items: [
+  more: { title: ['Also new', 'in the beta.'], body: 'Two more changes in the beta. The release notes list the rest.', items: [
     { media: 'repair-layout', title: 'Repair Layout', body: 'Rebuild a desktop’s layout from its visible windows. Adaptive panes return to equal shares.' },
     { media: 'multi-display', title: 'Multiple displays', body: 'Next Display and Previous Display make room on the destination and close the gap on the source.' },
   ] },
@@ -41,7 +42,7 @@ export const copy = {
 };
 
 export const faq = [
-  ['Which Macs can run it?', 'BetterTile 0.6 requires an Apple silicon Mac with macOS 26 or later. Intel Macs stay on 0.5.2 and are not offered this update. Accessibility is the only macOS permission BetterTile requests. Check the latest release notes before installing a new version.'],
+  ['Which Macs can run it?', 'BetterTile requires an Apple silicon Mac with macOS 26 or later. Intel Macs stay on 0.5.2 and are not offered this update. Accessibility is the only macOS permission BetterTile requests. Check the latest release notes before installing a new version.'],
   ['Why does it need Accessibility?', 'Accessibility lets BetterTile read window frames, then move and resize eligible windows. The app explains the permission before requesting it.'],
   ['Is it really free?', 'Yes. BetterTile is free forever and open source under GPL v3 or later. There is no paid tier, trial expiry, subscription, advertising, behavioral tracking, or sale of user data.'],
   ['Does the app use the internet?', 'Window and configuration data stay on your Mac. Update checks and downloads contact GitHub, which receives ordinary connection metadata. Automatic update checks run every four hours by default and can be disabled. Send Feedback opens a GitHub form with the app version and build in its suggested title; it submits no issue automatically.'],

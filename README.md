@@ -7,7 +7,6 @@ app lives on `main`. The two branches have separate histories. Do not merge
 Node.js 22 or later. No packages to install.
 
 ```sh
-npm run release   # refresh release.json from GitHub's public releases
 npm run build     # render the pages, check them, and export to dist/
 npm run dev       # preview at http://127.0.0.1:4188/
 ```
@@ -17,9 +16,10 @@ npm run dev       # preview at http://127.0.0.1:4188/
   `acknowledgements.html`, `sitemap.xml`, `robots.txt`, identity SVGs) are
   committed, because Pages serves the branch root. Do not edit them by hand.
   Do not commit `dist/`.
-- After each app release, run `npm run release` and `npm run build`, then commit
-  the result. The Website checks workflow fails when `release.json` is behind
-  the latest GitHub release.
+- Every Download button opens `DOWNLOAD_URL` in `content.mjs`, so the site
+  shows no version, date or size and needs no change for a new release. When a
+  release uploads the fixed-name asset `BetterTile.dmg`, change that one
+  constant to `.../releases/latest/download/BetterTile.dmg`.
 - Pages publishes with **Deploy from a branch**, `gh-pages`, `/ (root)`. Keep
   `.nojekyll`.
 

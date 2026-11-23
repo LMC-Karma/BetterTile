@@ -23,15 +23,3 @@ jobs:
         with:
           node-version: '22'
       - run: npm run build
-      - name: Check that the site shows the latest release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          site=$(jq -r '.latest.tag' release.json)
-          latest=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq '.tagName')
-          echo "release.json: $site"
-          echo "Latest GitHub release: $latest"
-          if [ "$site" != "$latest" ]; then
-            echo "::error title=Website shows an old release::release.json lists $site, but the latest release is $latest. Run 'npm run release', then 'npm run build', and publish the result."
-            exit 1
-          fi
