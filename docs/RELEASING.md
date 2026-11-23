@@ -270,24 +270,6 @@ does not yet serve the new build. That check can lag behind GitHub's CDN by a
 minute; re-run it before announcing rather than treating the first failure as
 final.
 
-## Update the website
-
-After you publish and check the release, update the website so its Download
-buttons point at the new DMG. The website is the `gh-pages` branch. Its
-`release.json` file names the latest release and its DMG. A website check fails
-when `release.json` and the latest GitHub release differ.
-
-1. Branch from `gh-pages`, for example `release-json-0.1.0`.
-2. Run `npm run release` on that branch. It reads the public releases from
-   GitHub and rewrites `release.json` with the new `latest` entry, the three
-   most recent releases, and today's date. Run `npm run build` to check the
-   result.
-3. Open a pull request against `gh-pages`. Merge it after its checks pass.
-4. Open the website and confirm that the Download buttons name the new DMG.
-
-Do not push to `gh-pages` directly. Run this step only after the release is
-public, because the script reads the published release.
-
 ## Relocating the appcast
 
 Moving the feed to a new address strands every installation that predates the
