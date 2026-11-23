@@ -64,7 +64,7 @@ preserve both the custom icon and strict verification.
 
 This is a runtime customization. Release packaging and its strict signature
 checks remain unchanged. BetterTile does not re-sign itself, replace icon
-resources, edit Info.plist, or change Sparkle's validation. Sparkle 2.9.5's
+resources, edit Info.plist, or change Sparkle's validation. Sparkle 2.10.1's
 `SUCodeSigningVerifier` uses ordinary all-architecture signature validation;
 its delta hash in `SUBinaryDeltaCommon` excludes custom-icon resource data.
 These source checks do not substitute for a full signed update test.

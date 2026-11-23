@@ -71,9 +71,9 @@ if [[ "$(appcast_builds "$current_format")" == "6" ]] \
     && [[ "$(appcast_versions "$current_format")" == "0.4.1" ]] \
     && appcast_contains_build "$current_format" 6 \
     && appcast_contains_version "$current_format" 0.4.1; then
-    pass "reads the format emitted by Sparkle 2.9.5"
+    pass "reads the format emitted by Sparkle 2.10.1"
 else
-    fail "reads the format emitted by Sparkle 2.9.5"
+    fail "reads the format emitted by Sparkle 2.10.1"
 fi
 
 legacy_format="$scratch/legacy-format.xml"

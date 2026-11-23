@@ -4,7 +4,7 @@ BetterTile public betas are published as GitHub releases: a DMG containing an
 application signed with the maintainer-held, self-signed `BetterTile Beta`
 certificate. The DMG archive itself carries no Apple code signature; it is
 authenticated separately by the Sparkle **EdDSA signature** recorded in the
-appcast. The app uses Sparkle 2.9.5 to discover and verify later releases. Tags
+appcast. The app uses Sparkle 2.10.1 to discover and verify later releases. Tags
 and release titles carry the beta label; Apple bundle versions remain numeric.
 
 The first release is:
@@ -28,7 +28,7 @@ See [Sparkle's internal build number documentation](https://sparkle-project.org/
 ## Supported Macs and debug symbols
 
 Release builds support Apple silicon (arm64) only. Intel Macs are no longer
-supported. Sparkle 2.9.5 generates
+supported. Sparkle 2.10.1 generates
 `<sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>` from the
 app's executable. The release script rejects an appcast that lacks this element
 on the new build. Intel users stay on the last compatible universal build;
