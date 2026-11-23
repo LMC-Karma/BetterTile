@@ -547,6 +547,13 @@ Sparkle is the sole current runtime dependency. It verifies BetterTile update
 archives with an EdDSA signature. Its private signing key remains outside the
 repository and GitHub Actions.
 
+Dependabot proposes weekly update pull requests for Sparkle and for the
+SHA-pinned GitHub Actions on `main` and `gh-pages`. It only opens pull
+requests. Each one gets the same review as any other dependency change, and
+nothing merges automatically. The repository allows only GitHub-owned actions
+plus the reviewed Claude review action and its setup dependency, and requires
+every action to be pinned to a full commit SHA.
+
 ## Build-time Metal Toolchain
 
 The Layout Wheel compiles its shader with Apple's Metal Toolchain, an Xcode
@@ -574,8 +581,8 @@ application builds do not cache DerivedData; its benefit has not been measured.
 The existing Metal Toolchain cache remains available to all macOS jobs.
 
 The cache uses GitHub's MIT-licensed `actions/cache/restore` and
-`actions/cache/save`, pinned to `0057852bfaa89a56745cba8c7296529d2fc39830`
-from the official major-version-4 tag. This reuses the dependency already used
+`actions/cache/save`, pinned to `55cc8345863c7cc4c66a329aec7e433d2d1c52a9`
+from the official `v6.1.0` tag, which runs on Node.js 24. This reuses the dependency already used
 for Metal. The dependency review covers its CI-only scope, immutable pin,
 trusted saves, cache isolation, and removal without build-command changes.
 Pin updates require review; this change does not independently audit the

@@ -9,17 +9,31 @@ runs:
       run: echo "version=$(xcodebuild -version | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
     - name: Restore Metal Toolchain download
       id: metal-cache
-      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # version 4
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ runner.temp }}/bettertile-metal
         key: metal-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode.outputs.version }}
     - name: Import Metal Toolchain
       shell: bash
       run: Tools/ci/setup-metal.sh "$RUNNER_TEMP/bettertile-metal"
+    # When the runner image already has the component, the setup script exports
+    # nothing. Saving an empty path only produces a "Cache save failed" warning.
+    - name: Check for an exported Metal Toolchain
+      id: metal-export
+      shell: bash
+      run: |
+        if compgen -G "$RUNNER_TEMP/bettertile-metal/*" > /dev/null; then
+          echo "exported=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "exported=false" >> "$GITHUB_OUTPUT"
+        fi
     # Match the build-cache policy: pull requests restore but cannot save.
     - name: Save Metal Toolchain download
-      if: github.event_name != 'pull_request' && steps.metal-cache.outputs.cache-hit != 'true'
-      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # version 4
+      if: >-
+        github.event_name != 'pull_request' &&
+        steps.metal-cache.outputs.cache-hit != 'true' &&
+        steps.metal-export.outputs.exported == 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ runner.temp }}/bettertile-metal
         key: ${{ steps.metal-cache.outputs.cache-primary-key }}
