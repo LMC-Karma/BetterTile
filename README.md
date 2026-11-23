@@ -12,20 +12,25 @@
 <p align="center"><strong>Your windows. Working together.</strong></p>
 
 <p align="center">
-  A free, native macOS window manager.<br>
-  Snap windows into place, resize neighbours together, and let Adaptive layouts make room as your work grows.
+  A free, open-source window manager for macOS.<br>
+  Drag the edge between two windows and both resize together. Open a new window and Adaptive tiling makes room for it.<br>
+  Add Tabbed panes, a Layout Wheel, and Saved Layouts that bring back a desktop's arrangement.
 </p>
 
 <p align="center">
-  <a href="https://github.com/LMC-Karma/BetterTile/releases/latest"><strong>Download the latest beta</strong></a>
+  <a href="https://github.com/LMC-Karma/BetterTile/releases/latest"><strong>Download</strong></a>
   · <a href="https://lmc-karma.github.io/BetterTile/">Website</a>
   · <a href="#everything-it-does">Features</a>
+  · <a href="#default-shortcuts">Shortcuts</a>
   · <a href="#install">Install</a>
+  · <a href="#faq">FAQ</a>
   · <a href="#private-by-default">Privacy</a>
-  · <a href="#documentation">Documentation</a>
+  · <a href="https://github.com/LMC-Karma/BetterTile/issues/new?template=bug.yml">Report a bug</a>
+  · <a href="SECURITY.md">Security</a>
 </p>
 
 <p align="center">
+  <a href="https://github.com/LMC-Karma/BetterTile/releases/latest"><img src="https://img.shields.io/github/v/release/LMC-Karma/BetterTile?include_prereleases&label=release" alt="Latest release"></a>
   <a href="https://github.com/LMC-Karma/BetterTile/actions/workflows/ci.yml"><img src="https://github.com/LMC-Karma/BetterTile/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
   <a href="#what-you-need"><img src="https://img.shields.io/badge/platform-macOS%2026%2B-lightgrey.svg" alt="macOS 26 or later"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg" alt="License: GPL v3 or later"></a>
@@ -34,7 +39,7 @@
 
 <p align="center">
   Requires an Apple silicon Mac, macOS 26 or later, and Accessibility permission.<br>
-  The public beta is self-signed and not notarized. Read the <a href="#install">installation steps</a> before first launch.
+  The public beta is self-signed and not notarized. Read <a href="#install">Install</a> before first launch.
 </p>
 
 <p align="center">
@@ -51,7 +56,7 @@
   Feature demonstrations. For videos with playback controls, <a href="https://lmc-karma.github.io/BetterTile/#features">visit the website</a>.
 </p>
 
-<!-- Rendered product demonstrations of 0.6.0, exported at 800 × 450 and 20 fps. The GIFs are hosted with the website on GitHub Pages. -->
+<!-- Rendered product demonstrations of 0.6.0 (the interface has not changed since), exported at 800 × 450 and 20 fps. The GIFs are hosted with the website on GitHub Pages. -->
 
 <h3 align="center" id="resize-neighbours-together">Resize neighbours together</h3>
 
@@ -161,7 +166,7 @@
 
 <p align="center">
   <strong>Keyboard shortcuts and undo</strong><br>
-  Place windows with global shortcuts, with duplicate checks for BetterTile actions.<br>
+  Place windows with <a href="#default-shortcuts">global shortcuts</a>, with duplicate checks for BetterTile actions.<br>
   Undo a placement to restore an earlier window frame.
 </p>
 
@@ -173,11 +178,40 @@
 
 ---
 
+## Default shortcuts
+
+These bindings are on in a new installation. Change or clear any of them in
+**Settings → Shortcuts**. Drag snapping and the Layout Wheel have their own
+Settings pages. In the table, ⌃ is Control, ⌥ is Option, and ⌘ is Command.
+
+| Action | Shortcut |
+| --- | --- |
+| Left, right, top, or bottom half | ⌃⌥ with ← → ↑ ↓ |
+| Top left, top right, bottom left, or bottom right quarter | ⌃⌥ with U, I, J, K |
+| Left third, center third, right third | ⌃⌥ with D, F, G |
+| Left two thirds, right two thirds | ⌃⌥ with E, T |
+| Maximize | ⌃⌥↩ |
+| Restore the previous size | ⌃⌥⌫ |
+| Center | ⌃⌥C |
+| Grow or shrink width | ⌃⌥= and ⌃⌥- |
+| Next display, previous display | ⌃⌥⌘→ and ⌃⌥⌘← |
+| Open the Layout Wheel (hold, pick a sector, release) | ⌃⌥⇧ |
+
+Other actions, such as the sixths, Almost Maximize, Tabbed tab commands, and
+height changes, have no default key. Assign them on the Shortcuts page.
+
+Drag snapping is also on by default. Drag a title bar to an edge or corner:
+left and right edges give halves, corners give quarters, and the top edge gives
+Almost Maximize. Hold Option while dragging to skip snapping. A double-click on
+a title bar maximizes the window.
+
+---
+
 ## What you need
 
 - An Apple silicon Mac with macOS 26 or later. Intel Macs are not supported by current releases.
 - Accessibility permission. This is the only macOS permission BetterTile requests.
-- To build from source: Xcode 26 / Swift 6.3 or later. See [Development setup](docs/DEVELOPMENT.md).
+- To build from source: Xcode 26 with the Swift 6.3 toolchain or later. The package declares Swift tools 6.2, and the app builds in Swift 6 language mode. See [Development setup](docs/DEVELOPMENT.md).
 
 ## Install
 
@@ -187,8 +221,8 @@
    **BetterTile Beta** certificate. It is **not signed with an Apple Developer ID
    and is not notarized**. After the first launch attempt, open **System Settings →
    Privacy & Security** and choose **Open Anyway** after confirming the download
-   came from this repository. You can check it against the `.sha256` file beside
-   the release download.
+   came from this repository. To check the download first, see
+   [How do I verify the download?](#how-do-i-verify-the-download)
 3. Follow BetterTile's explanation to grant **Accessibility** permission.
    BetterTile runs in the menu bar. Its Dock icon is optional and off by default.
 
@@ -252,7 +286,138 @@ private observations, fallback behavior, and vulnerability reporting.
   dragging is unavailable.
 - **Some apps restrict window sizes.** Broader real-app stacking,
   multi-display, and Space-switch behavior remains under validation. Read the
-  [beta notes](docs/releases/0.6.0-beta.md).
+  [latest release notes](docs/releases/0.6.2-beta.md), or browse
+  [all releases](https://github.com/LMC-Karma/BetterTile/releases).
+
+## How it compares
+
+BetterTile is not the right tool for everyone. This is a short guide. Each
+description comes from the other app's own public page as of November 2026, so
+check that page for current details.
+
+- **[Rectangle](https://github.com/rxhanson/Rectangle).** Keyboard shortcuts and
+  drag snap areas for halves, quarters, and thirds, from a mature open-source
+  project. It supports macOS 14 and later and installs with Homebrew. Pick it for
+  simple, proven snapping or an older macOS. Pick BetterTile when you want
+  linked resizing, Adaptive tiling, Tabbed panes, or Saved Layouts.
+- **[Loop](https://github.com/MrKai77/Loop).** A radial menu triggered by a key
+  press, with cycles, a resize preview, and stashing windows at the screen edge.
+  It supports macOS 13 and later. BetterTile's Layout Wheel is similar. Pick
+  Loop for an older macOS, cycles, or stashing. Pick BetterTile for the layout
+  modes around the wheel.
+- **[AeroSpace](https://github.com/nikitabobko/AeroSpace).** An i3-like tiling
+  window manager. It uses its own virtual workspaces, not macOS Spaces, and a
+  plain-text configuration and command line. Pick it for keyboard-first tiling
+  that you script. BetterTile works with native Spaces, uses a menu-bar app
+  and Settings, and does not move windows between desktops.
+- **[Magnet](https://magnet.crowdcafe.com/) and [Moom](https://manytricks.com/moom/).**
+  Magnet snaps windows into tiles by dragging, shortcuts, or the menu bar, and it
+  is on the Mac App Store. Moom offers a pop-up palette, custom actions, and
+  saved window layouts. Pick them if you prefer their approach. BetterTile's
+  Saved Layouts and linked resizing cover similar ground.
+
+BetterTile needs an Apple silicon Mac and macOS 26 or later. Its beta is not
+notarized, and its Tabbed mode needs Stage Manager off. If one of those blocks
+you, pick one of the tools above.
+
+## FAQ
+
+### Why is the beta self-signed and not notarized? How do I open it?
+
+BetterTile's public beta is signed with a stable, self-signed **BetterTile Beta**
+certificate. It is not an Apple Developer ID certificate, so Apple has not
+notarized it. The stable certificate lets macOS keep your Accessibility
+permission across normal updates. Sparkle also checks each update's EdDSA
+signature against a public key built into the app.
+
+To open it the first time:
+
+1. Open the `.dmg` and drag BetterTile into **Applications**.
+2. Open BetterTile. macOS blocks it.
+3. Open **System Settings → Privacy & Security**, scroll to the message about
+   BetterTile, and choose **Open Anyway**.
+4. Grant **Accessibility** permission when BetterTile asks.
+
+### How do I verify the download?
+
+Every release has a `.sha256` file beside the `.dmg`. Download both into one
+folder, then run this in that folder:
+
+```sh
+shasum -a 256 -c BetterTile-0.6.2-beta.dmg.sha256
+```
+
+Use the file name of the version you downloaded. The command prints `OK` when the
+file matches. The checksum comes from the same release page as the download, so
+it detects a damaged download. It does not prove who built the file.
+
+### Does it run on an Intel Mac or on macOS before 26?
+
+No current release does. Releases from 0.6.0 run only on Apple silicon Macs with
+macOS 26 or later. The last release for Intel Macs is
+[0.5.2](https://github.com/LMC-Karma/BetterTile/releases/tag/v0.5.2-beta). It
+also needs macOS 26, and Intel Macs are not offered newer updates. No release
+supports macOS before 26.
+
+### What data leaves my Mac?
+
+Only update checks and downloads contact a server, and that server is GitHub.
+They send no window data, configuration, analytics, telemetry, crash reports,
+or system profile. **Send Feedback** opens a GitHub form in your browser and
+submits nothing by itself. Read [Private by default](#private-by-default) and [Security and privacy](SECURITY.md).
+
+### Can I turn off the private APIs?
+
+Yes. BetterTile uses a small set of reviewed, read-only private observations,
+each with a public fallback. They are described in [Security and privacy](SECURITY.md).
+To turn all of them off, quit BetterTile and run:
+
+```sh
+defaults write com.lmckarma.BetterTile disablePrivateAPIs -bool true
+```
+
+Then open BetterTile again. The affected behavior uses the public fallbacks.
+To turn them back on:
+
+```sh
+defaults delete com.lmckarma.BetterTile disablePrivateAPIs
+```
+
+### Where are my settings stored?
+
+- Configuration: `~/Library/Application Support/BetterTile/configuration.json`.
+- Saved Layouts, App Groups, and display bindings: other files in
+  `~/Library/Application Support/BetterTile/`.
+- Some preferences: the `com.lmckarma.BetterTile` defaults domain, in
+  `~/Library/Preferences/com.lmckarma.BetterTile.plist`.
+
+A Debug build uses separate copies with `.debug` and `BetterTile Debug` names.
+None of these files is uploaded.
+
+### How do I uninstall BetterTile and reset its Accessibility permission?
+
+1. Quit BetterTile from its menu bar icon.
+2. If you turned on **Launch at login**, turn it off in **System Settings →
+   General → Login Items**.
+3. Delete BetterTile from **Applications**.
+4. To remove its data, delete the `BetterTile` folder in
+   `~/Library/Application Support/` and run
+   `defaults delete com.lmckarma.BetterTile`.
+5. To remove its Accessibility permission, run:
+
+```sh
+tccutil reset Accessibility com.lmckarma.BetterTile
+```
+
+To reset the permission without uninstalling, run the same command, then open
+BetterTile and grant permission again.
+
+### Where do I get help or report a bug?
+
+Report bugs and request features on
+[GitHub Issues](https://github.com/LMC-Karma/BetterTile/issues/new/choose).
+Report security problems as [SECURITY.md](SECURITY.md) describes, not in a
+public issue.
 
 <h2 align="center" id="bettertile-is-free">BetterTile is free</h2>
 
@@ -273,6 +438,7 @@ private observations, fallback behavior, and vulnerability reporting.
 - [Contributing](CONTRIBUTING.md) — branch, test, and pull-request workflow.
 - [Architecture](docs/ARCHITECTURE.md) — layers, coordinates, window mutations, and Adaptive.
 - [Domain glossary](CONTEXT.md) — shared BetterTile terms.
+- [Release notes](docs/releases/0.6.2-beta.md) — what changed in the latest beta. [All releases](https://github.com/LMC-Karma/BetterTile/releases).
 - [Beta releases](docs/RELEASING.md) — version, validate, sign, and publish an update.
 - [Security and privacy](SECURITY.md) — permissions, networking, and reporting policy.
 - [Third-party notices](THIRD_PARTY_NOTICES.md) — upstream code, attribution, and terms.
