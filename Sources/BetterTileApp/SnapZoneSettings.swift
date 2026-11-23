@@ -479,7 +479,7 @@ struct SnapActivationBands: View {
     var dashed = false
 
     /// The diagram's bands at display scale. An edge band is at least 4 points thick so that it stays visible.
-    static func diagram(
+    nonisolated static func diagram(
         width: CGFloat, edgeWidth: Double, cornerExtension: Double, selectedArea: SnapArea?
     ) -> Self {
         let scale = width / SnapZonePreviewGeometry.display.frame.size.width
@@ -519,7 +519,7 @@ struct SnapActivationBands: View {
     }
 
     /// A corner is never thinner than the edge band beside it, as on a real display.
-    func band(for area: SnapArea, in size: CGSize) -> CGRect {
+    nonisolated func band(for area: SnapArea, in size: CGSize) -> CGRect {
         let limit = min(size.width, size.height) / 2
         let edge = min(limit, edge)
         let corner = min(limit, max(edge, reach))

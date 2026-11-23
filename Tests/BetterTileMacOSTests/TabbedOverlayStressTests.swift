@@ -140,7 +140,7 @@ private struct SplitMix64 {
             let chooser = StressChooserPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
                                              backing: .buffered, defer: false)
             choosers.append(chooser)
-            let gallery = overlay.makeLayoutGallery(paneID: pane.id) { content, size in
+            let gallery = overlay.makeLayoutGallery(paneID: pane.id) { [unowned self] content, size in
                 let presenter = TabbedChooserPresenter(content: content, size: size, panel: chooser)
                 presenter.addGlobalRightMouseMonitor = { [unowned self] _ in addMonitor() }
                 presenter.removeMonitor = { [unowned self] token in liveMonitors.remove(ObjectIdentifier(token as AnyObject)) }

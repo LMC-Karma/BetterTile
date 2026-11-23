@@ -102,7 +102,7 @@ struct DividerOverlayLifetimeTests {
         overlay?.fadeOut()
         let fade = try #require(overlay?.fadeTask)
         try #require(await clock.waitForSleepers(count: 1, timeout: .seconds(20)))
-        weak var released = overlay
+        weak let released = overlay
         overlay = nil
         #expect(released == nil)
         #expect(fade.isCancelled)

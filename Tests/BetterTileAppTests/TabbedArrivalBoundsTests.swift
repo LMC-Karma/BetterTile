@@ -10,7 +10,7 @@ func tabbedArrivalKeepsRoundedBottomInsideThe1440PointDisplay() async throws {
     let bounds = BTRect(x: 1210, y: 34, width: 2560, height: 1406)
     system.availableDisplays = [DisplaySnapshot(id: display,
         frame: BTRect(x: 1210, y: 0, width: 2560, height: 1440), visibleFrame: bounds, isMain: true)]
-    let top = system.windows[0].id, bottom = WindowID(rawValue: "bottom")
+    let bottom = WindowID(rawValue: "bottom")
     system.windows[0].frame = BTRect(x: 1210, y: 34, width: 2560, height: 702.5)
     system.windows.append(WindowSnapshot(id: bottom, processIdentifier: 43,
         frame: BTRect(x: 1210, y: 737.5, width: 2560, height: 702.5), displayID: display))

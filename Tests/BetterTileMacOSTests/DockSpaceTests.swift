@@ -1,6 +1,7 @@
 import Foundation
 import BetterTileCore
 @testable import BetterTileMacOS
+import BetterTileTestSupport
 import Testing
 
 private let mainID = DisplayID(rawValue: "main")
@@ -101,11 +102,11 @@ private let main = BTRect(x: 0, y: 0, width: 2560, height: 1440)
 /// never hides still keeps its strip: macOS reserves it too, but AppKit can
 /// report a secondary display's work area late after the Dock moves there.
 @Test(.macOSTestApplication) @MainActor func settingOffKeepsOnlyADockThatNeverHides() {
-    var autohides = true
+    let autohides = MainActorBox(true)
     var listReads = 0
     let reader = DockSpaceReader(
         defaults: MemoryDefaults(),
-        readPreferences: { (.right, autohides) },
+        readPreferences: { (.right, autohides.value) },
         readList: {
             listReads += 1
             return BTRect(x: 2488, y: 100, width: 72, height: 1200)
@@ -117,7 +118,7 @@ private let main = BTRect(x: 0, y: 0, width: 2560, height: 1440)
     // Turning the setting on reads at once, without waiting for the next second.
     #expect(reader.footprint(displays: [(mainID, main)], whileHidden: true, now: 0.1) == strip)
     #expect(reader.footprint(displays: [(mainID, main)], whileHidden: false, now: 0.2) == nil)
-    autohides = false
+    autohides.value = false
     #expect(reader.footprint(displays: [(mainID, main)], whileHidden: false, now: 2) == strip)
 }
 

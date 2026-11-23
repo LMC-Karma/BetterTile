@@ -123,7 +123,7 @@ func tabbedTooltipOwnersSurviveRegistrationAndReleaseAfterRemoval(presentation: 
     let observations = view?.observations ?? []
     #expect(observations.count >= 2)
     autoreleasepool { #expect(observations.allSatisfy { $0.owner != nil }) }
-    weak var weakView = view
+    weak let weakView = view
     autoreleasepool { view = nil }
     #expect(weakView == nil)
     #expect(observations.allSatisfy { !$0.isHeapString || $0.owner == nil })

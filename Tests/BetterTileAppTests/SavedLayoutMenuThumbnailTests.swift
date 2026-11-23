@@ -214,9 +214,9 @@ import Testing
         return max(abs(a.redComponent - b.redComponent), abs(a.greenComponent - b.greenComponent), abs(a.blueComponent - b.blueComponent))
     }
 
-    nonisolated(unsafe) static let red = NSColor(srgbRed: 1, green: 0, blue: 0, alpha: 1)
-    nonisolated(unsafe) static let green = NSColor(srgbRed: 0, green: 1, blue: 0, alpha: 1)
-    nonisolated(unsafe) static let palette: [String: NSColor] = ["com.apple.Safari": red, "com.apple.Notes": green, "com.apple.Preview": NSColor(srgbRed: 0, green: 0, blue: 1, alpha: 1),
+    static let red = NSColor(srgbRed: 1, green: 0, blue: 0, alpha: 1)
+    static let green = NSColor(srgbRed: 0, green: 1, blue: 0, alpha: 1)
+    static let palette: [String: NSColor] = ["com.apple.Safari": red, "com.apple.Notes": green, "com.apple.Preview": NSColor(srgbRed: 0, green: 0, blue: 1, alpha: 1),
         "com.apple.mail": NSColor(srgbRed: 1, green: 1, blue: 0, alpha: 1), "com.apple.iCal": NSColor(srgbRed: 1, green: 0, blue: 1, alpha: 1),
         "com.apple.iBooksX": NSColor(srgbRed: 0, green: 1, blue: 1, alpha: 1)]
 

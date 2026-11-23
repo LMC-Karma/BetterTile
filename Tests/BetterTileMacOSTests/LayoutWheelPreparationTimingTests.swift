@@ -36,12 +36,12 @@ import Testing
     }
 
     @Test func stoppedActivationDoesNotReadAReleasedClockOwner() async throws {
-        var ownerAlive = true
+        let ownerAlive = MainActorBox(true)
         var lateRead = false
         var waits = 0
         let controller = LayoutWheelController(configuration: .init(), presenter: Presenter(),
             activationWait: { _ in waits += 1 },
-            now: { if !ownerAlive { lateRead = true }; return 0 },
+            now: { if !ownerAlive.value { lateRead = true }; return 0 },
             pointerProvider: { .init(x: 800, y: 500) },
             addGlobalMonitor: { _, _ in NSObject() }, addLocalMonitor: { _, _ in NSObject() }, removeMonitor: { _ in })
         controller.start()
@@ -49,7 +49,7 @@ import Testing
         // stop() clears the controller's handle; keep the task to join it.
         let activation = try #require(controller.activationTaskForTesting)
         controller.stop()
-        ownerAlive = false
+        ownerAlive.value = false
         await activation.value
         #expect(!lateRead)
         // The cancelled task left at its first check and never began the wait.
@@ -58,7 +58,7 @@ import Testing
 
     @Test func activationCancelledDuringTheHoldDoesNotReadAReleasedClockOwner() async throws {
         let clock = ManualClock()
-        var ownerAlive = true
+        let ownerAlive = MainActorBox(true)
         var lateRead = false
         var waitEnd: String?
         let controller = LayoutWheelController(configuration: .init(), presenter: Presenter(),
@@ -71,7 +71,7 @@ import Testing
                     throw error
                 }
             },
-            now: { if !ownerAlive { lateRead = true }; return 0 },
+            now: { if !ownerAlive.value { lateRead = true }; return 0 },
             pointerProvider: { .init(x: 800, y: 500) },
             addGlobalMonitor: { _, _ in NSObject() }, addLocalMonitor: { _, _ in NSObject() }, removeMonitor: { _ in })
         controller.start()
@@ -79,7 +79,7 @@ import Testing
         let activation = try #require(controller.activationTaskForTesting)
         await clock.waitForSleepers(count: 1)
         controller.stop()
-        ownerAlive = false
+        ownerAlive.value = false
         await activation.value
         #expect(waitEnd == "cancelled")
         #expect(clock.pendingSleepCount == 0)
