@@ -75,13 +75,16 @@ enum SavedLayoutEditorAction {
         return pending
     }
 
-    func begin(_ setup: SavedLayoutNewSetup, editor: SavedLayoutEditor) {
-        if !isDraft { returnURL = editor.url }
-        editor.newLayout(mode: setup.mode)
+    /// A refused new layout keeps the current draft and draft state.
+    @discardableResult func begin(_ setup: SavedLayoutNewSetup, editor: SavedLayoutEditor) -> Bool {
+        let previousURL = editor.url
+        guard editor.newLayout(mode: setup.mode) else { return false }
+        if !isDraft { returnURL = previousURL }
         if setup.showsPresets { editor.setPreset(setup.preset) }
         editor.edit { $0.name = setup.name }
         editor.resetHistory()
         isDraft = true
+        return true
     }
 
     @discardableResult func save(editor: SavedLayoutEditor) -> Bool {
