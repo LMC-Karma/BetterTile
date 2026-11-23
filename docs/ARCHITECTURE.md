@@ -4,6 +4,41 @@ Product text uses **Adaptive** instead of Bento, **Manual** instead of Native, *
 
 BetterTile separates deterministic placement policy from macOS side effects.
 
+## About this document
+
+This document describes how BetterTile is built: its layers, coordinate model,
+window-mutation rules, and the design of each major feature. Read it before you
+change a layer boundary, a coordinate conversion, a window mutation, an
+application integration, or the update path. The rules in
+[AGENTS.md](../AGENTS.md) summarize the layer limits. Product behavior and terms
+are in [CONTEXT.md](../CONTEXT.md).
+
+**Terminology.** In code and in this document, **Bento** is the code name for
+the product's **Adaptive** mode. Type names, identifiers, and the `"bento"`
+configuration value keep the old name. Product text, such as Settings and
+release notes, says Adaptive. [CONTEXT.md](../CONTEXT.md) records this rule.
+
+Sections:
+
+- [Layers](#layers): The three layers and what each owns.
+- [Application-level integrations](#application-level-integrations): How the app delegate owns Sparkle and other application-level work.
+- [Time source](#time-source): The clock that Core and the app use, and how tests control it.
+- [Coordinate model](#coordinate-model): Logical top-left points in Core, and conversion at the macOS boundary.
+- [Snap Zones](#snap-zones): Zone selection and activation areas for drag snapping.
+- [Window drag drops](#window-drag-drops): How one window drag becomes one drop decision.
+- [Space boundary](#space-boundary): Which windows BetterTile manages and how it follows Spaces and displays.
+- [Popup and fixed-size windows](#popup-and-fixed-size-windows): Windows that float and never join a layout.
+- [Event ordering](#event-ordering): How display, sleep, window, and input events are ordered and settled.
+- [Minimum sizes](#minimum-sizes): How BetterTile learns and applies window minimum sizes.
+- [Unresponsive applications](#unresponsive-applications): How hung applications are kept from blocking window work.
+- [Bento](#bento): The Adaptive layout tree, its reducers, and its resize and placement rules.
+- [Tabbed panels on native Spaces](#tabbed-panels-on-native-spaces): Tabbed panes and their overlays on native Spaces.
+- [Overlay appearance](#overlay-appearance): Overlay panels, including the pane application picker.
+- [Linked resizing](#linked-resizing): Shared boundaries and linked resize behavior.
+- [Configuration](#configuration): The configuration file, schema, and migrations.
+- [Saved Layouts](#saved-layouts): The Saved Layout document, its validation, and how a layout is applied.
+- [Security](#security): The security rules that affect the architecture.
+
 ## Layers
 
 1. **BetterTileCore** owns geometry, actions, Bento placement, linked resizing, frame history, shortcut/configuration models, and migrations. It has no AppKit or Accessibility dependency. It contains no updater API and must not gain one: updating is a distribution concern, not placement policy.

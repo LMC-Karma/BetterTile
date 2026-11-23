@@ -6,8 +6,13 @@ contributors should read [CONTRIBUTING.md](CONTRIBUTING.md).
 ## Project
 
 BetterTile is a native macOS window manager. It provides keyboard and drag
-snapping, linked resizing, and Adaptive tiling. It uses Swift 6.3,
-SwiftUI, AppKit, and the public Accessibility API.
+snapping, linked resizing, and Adaptive tiling. It uses Swift, SwiftUI,
+AppKit, and the public Accessibility API.
+
+Toolchain: Xcode 26.6 or later, which includes the Swift 6.3 compiler (the
+minimum). `Package.swift` uses swift-tools-version 6.2. Both the package and
+the Xcode project build in Swift 6 language mode. See
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#prerequisites).
 
 BetterTile is free. It has no advertising, behavioral tracking, or sale of user
 data.

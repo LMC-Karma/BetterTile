@@ -258,8 +258,8 @@ fixture windows, not foreign application content.
 These checks do not establish that cross-process flicker is gone. The real-app
 matrix, physical input timing, and display/Space interruption checks remain open.
 The integrated pass completed 914 tests across Core, macOS, and App targets,
-`swift build`, and the Debug Xcode build with signing disabled. Astra reviewed
-the final changes before commit. No real managed applications were used in
+`swift build`, and the Debug Xcode build with signing disabled. The final
+changes were reviewed before commit. No real managed applications were used in
 these automated checks.
 
 The existing interaction benchmark compared the original and revised overlay

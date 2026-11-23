@@ -40,8 +40,7 @@ jobs:
       - id: review
         uses: anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b # v1
         with:
-          # Uses a Claude subscription (Pro/Max) via OAuth — no API credits.
-          # Generate the token with `claude setup-token` and store it as a repo secret.
+          # A maintainer-held repository secret; contributors need no token.
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
             Review pull request #${{ github.event.pull_request.number }} in
@@ -106,7 +105,7 @@ jobs:
     # The author_association gate is essential on a public repo: these events run
     # in the base-repo context with access to CLAUDE_CODE_OAUTH_TOKEN regardless
     # of who commented, so without it any GitHub user could burn the Claude
-    # subscription quota (or attempt prompt injection) by writing "@claude".
+    # review quota (or attempt prompt injection) by writing "@claude".
     # Only the repo owner, org members, and invited collaborators may trigger it.
     if: >
       (github.event_name == 'issue_comment' &&
