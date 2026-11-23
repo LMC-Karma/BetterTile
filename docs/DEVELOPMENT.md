@@ -4,7 +4,8 @@ Everything a new contributor needs to build, run, and test BetterTile on their
 own Mac. Read [AGENTS.md](../AGENTS.md) for the architecture rules and
 [CONTRIBUTING.md](../CONTRIBUTING.md) for the branch and pull-request workflow.
 The canonical security, privacy, dependency, networking, and permissions policy
-is [SECURITY.md](../SECURITY.md).
+is [SECURITY.md](../SECURITY.md). Feature-by-feature disclosures are in
+[SECURITY_DISCLOSURES.md](SECURITY_DISCLOSURES.md).
 
 ---
 
@@ -200,7 +201,7 @@ and requires every other failed or cancelled job to have zero steps, or only
 unstarted step placeholders plus a “not acquired by Runner” check annotation.
 Any executed step blocks the rerun, including setup failures and real test
 failures. The workflow uses only `GITHUB_TOKEN` and GitHub's API on Ubuntu; it
-never checks out or runs PR code. See [the security disclosure](../SECURITY.md#ci-runner-recovery)
+never checks out or runs PR code. See [the security disclosure](SECURITY_DISCLOSURES.md#ci-runner-recovery)
 for its permissions and removal. The push-only rule, nightly run and automatic
 rerun need verification after merge.
 

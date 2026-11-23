@@ -101,7 +101,8 @@ public enum FeedbackLink {
     ///
     /// Opening this URL does not submit anything: it shows GitHub's issue form
     /// for the user to complete. No window information, configuration,
-    /// diagnostics, analytics, or system profile is included. See SECURITY.md.
+    /// diagnostics, analytics, or system profile is included. See
+    /// docs/SECURITY_DISCLOSURES.md.
     public static func url(version: String, build: String) -> URL? {
         var components = URLComponents(string: issueFormPath)
         components?.queryItems = [

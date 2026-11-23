@@ -148,9 +148,12 @@ approval before implementation.
 BetterTile accepts no SIP workaround or code injection. Changes to
 dependencies, networking, permissions, privileged components, user data,
 distribution, and architecture also need the review defined in `SECURITY.md`.
+Record the disclosure in `docs/SECURITY_DISCLOSURES.md`.
 Record compatible licensing, provenance, and attribution for adapted code.
 
 [SECURITY.md](SECURITY.md) is the canonical security and privacy policy.
+[docs/SECURITY_DISCLOSURES.md](docs/SECURITY_DISCLOSURES.md) holds the
+feature-by-feature disclosure records.
 
 ---
 

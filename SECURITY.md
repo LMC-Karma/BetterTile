@@ -1,977 +1,169 @@
 # Security Policy
 
+This file states how to report a vulnerability and which rules protect users.
+Feature-by-feature records are in
+[docs/SECURITY_DISCLOSURES.md](docs/SECURITY_DISCLOSURES.md).
+
 ## Reporting a vulnerability
 
-Report security or privacy concerns privately through
-[GitHub Security Advisories](https://github.com/LMC-Karma/BetterTile/security/advisories/new).
-Please do not open a public issue containing sensitive details.
+Report security or privacy concerns privately. Use
+[GitHub private vulnerability reporting](https://github.com/LMC-Karma/BetterTile/security/advisories/new).
+Do not open a public issue, pull request, or discussion that contains
+sensitive details.
 
-Include what you observed, how to reproduce it, and the macOS version you saw
-it on. You can expect an initial response within a few days.
+Include:
+
+- what you observed and why it is a security or privacy problem
+- the steps to reproduce it
+- the BetterTile version and build, and the macOS version
+- the effect: what an attacker gains, and what the attacker needs first
+- a proof of concept, if you have one
+
+Do not post exploit details, proof-of-concept code, or user data in public
+before a fix is released. Do not attach personal data or window contents to a
+report.
+
+### What to expect
+
+One maintainer runs this project, so fixes can take time. You can expect an
+initial reply within a few days. For a confirmed problem, the fix ships first,
+then a public GitHub security advisory that credits the reporter if the
+reporter agrees.
+
+## Supported versions
+
+Only the latest beta release receives security fixes. Update through
+**Check for Updates…** in BetterTile or from the
+[Releases page](https://github.com/LMC-Karma/BetterTile/releases).
+
+Release builds run on Apple silicon Macs with macOS 26 or later. Intel Macs
+stay on 0.5.2, the last universal release. That release receives no security
+fixes.
+
+## Scope
+
+In scope:
+
+- the BetterTile app and its update path
+- BetterTile's handling of its configuration, Saved Layouts, and other local
+  files
+- the release and CI configuration in this repository
+- a way to make BetterTile read, write, send, or keep more data than this
+  policy and the disclosures state
+
+Out of scope:
+
+- a problem that needs an attacker who already controls the user's account or
+  has administrator rights
+- a flaw in macOS, in another application, or in Sparkle itself. Report these to
+  Apple, to the application's maker, or to the
+  [Sparkle project](https://github.com/sparkle-project/Sparkle).
+- the missing notarization of a release. This is documented under
+  [Distribution](#distribution-and-updates).
+- a report with no demonstrated effect on security or privacy
 
 ## Security and privacy commitments
 
 BetterTile is a free utility. It has no paywall, subscription, advertising,
 behavioral tracking, or sale of user data. BetterTile does not monetize window,
 configuration, diagnostic, or usage data. Window geometry and configuration
-stay on the Mac; update checks send no window data, configuration, analytics,
+stay on the Mac. Update checks send no window data, configuration, analytics,
 telemetry, crash reports, or system profile. Product behavior and material data
 handling are disclosed in this repository.
 
-If an existing configuration cannot be read, decoded, or validated, BetterTile
-preserves the file and blocks all configuration saves for that session. Settings
-explains the failure. Changes still apply for the session. To resume saving,
-restore a valid configuration file, then quit and reopen BetterTile. Only a
-confirmed missing file permits defaults with normal saving. BetterTile creates
-no recovery copy and does not automatically retry a failed load.
+If an existing configuration cannot be read, BetterTile keeps the file and
+stops saving for that session. See
+[Configuration load failure](docs/SECURITY_DISCLOSURES.md#configuration-load-failure).
 
-Two platform-safety boundaries are permanent:
+## Permissions
 
-- do not inject code into other processes
-- do not bypass System Integrity Protection
+Accessibility is the only macOS permission BetterTile asks for. It moves and
+resizes windows. BetterTile also uses event taps for gestures and for the
+optional Layout Wheel middle click. It never calls the API that asks for Input
+Monitoring. **Launch at login** is off
+by default.
 
-Public Apple APIs are the default. A private API may be considered only after
-an explicit design discussion in an issue or draft pull request confirms that
-it fits BetterTile's product goals and that no adequate public API provides the
-same user benefit. The discussion must cover the API's scope, failure and
-compatibility risks, security and privacy impact, distribution implications,
-maintenance cost, testing plan, and a safe fallback when the API is unavailable
-or changes. Adoption requires maintainer approval and repository disclosure.
+A new permission or privileged component needs a design review, a
+least-privilege justification, an update to the disclosures, and an in-product
+explanation before the system prompt appears. See
+[Permissions and dependencies](docs/SECURITY_DISCLOSURES.md#permissions-and-dependencies).
 
-Other implementation choices may evolve when the user benefit justifies them.
-Changes are evaluated against security, privacy, transparency,
-maintainability, and user benefit rather than a blanket technology ban.
+## Private APIs
 
-## Debug arrival diagnostics
+BetterTile uses public Apple APIs by default. Two rules are permanent:
 
-Debug builds can record local window-arrival timing when the maintainer enables
-`BetterTileArrivalTrace` in the app's UserDefaults before launch. The default is
-off. Release builds contain no arrival trace. The trace helps separate app
-startup, unreadable windows, scheduling, minimum-size probes, and placement.
-It adds no Accessibility reads, permissions, dependencies, or networking.
+- Do not inject code into other processes.
+- Do not bypass System Integrity Protection.
 
-The JSONL file is `~/Library/Logs/BetterTile/arrival-trace.jsonl`. Records contain
-monotonic timestamps, a random trace-run ID, process-local window IDs, PIDs,
-opaque AX element hashes, logical-point frames, layout modes, and phase outcomes.
-They contain no window titles, document paths, or app names. New files use owner
-read/write permissions. Encoding and writes run on a serial utility queue.
-At most 4,096 records wait for the disk. If the disk stalls, later records are
-dropped and a `trace_overflow` record states how many were lost. Per-window
-trace state is released when the window closes.
-The file is appended across runs and remains until the tester removes it.
-There is no upload, rotation, or automatic purge. Enable it only for bounded
-local trials; inspect the file before sharing it. Fake-system tests cover the
-disabled path and phase ordering. Live capture and timing remain manual checks.
+A small set of read-only private observations is approved for macOS 26. They
+join Accessibility windows to window IDs, read stated minimum window sizes, and
+read Spaces membership. BetterTile finds them at runtime. A missing symbol or an
+invalid value uses the public fallback and never stops BetterTile from
+launching. The approved list, validation, and fallbacks are in
+[Private window observations](docs/SECURITY_DISCLOSURES.md#private-window-observations).
 
-Debug builds also emit `SavedLayoutTiming` debug messages to the local unified
-log. They contain an operation counter, ordinal slot number, fixed phase name,
-and elapsed milliseconds. They contain no app, layout, document, window, process,
-or desktop identity. They add no reads or uploads. Release builds do not emit
-these messages. Timing phases are total, inventory, plan and commit. Fixed
-failure phase codes identify request validity, coordinator final ownership,
-model post-placement and final validation, session commit, and settlement.
-Settlement codes distinguish interruption, supersession, read failure,
-ownership, overlap, unsettled frames, and retry failure or degradation.
-Failure messages contain no system error text and use zero elapsed milliseconds.
-Regression tests use the same callback with a fake clock.
-
-## Private window observations
-
-[Design issue #32](https://github.com/LMC-Karma/BetterTile/issues/32) approves
-the following read-only observations for macOS 26. BetterTile resolves private
-symbols at runtime. A missing symbol or rejected value uses the public fallback
-and never prevents launch.
-
-| API or attribute | Purpose | Validation and fallback |
-| --- | --- | --- |
-| `_AXUIElementGetWindow` | Join an Accessibility window to its exact WindowServer ID. | Accept a nonzero ID only. Validate it against the same PID, layer zero, and on-screen WindowServer record. Fall back to PID and frame correlation. |
-| `AXMinSize`, `AXMinimumSize` | Read an application's stated minimum window size. | Accept only finite, positive values no larger than the containing display. Merge accepted values with BetterTile's default and learned minimums by greatest dimension. Ignore malformed or unavailable values. |
-| `SLSMainConnectionID`, `SLSCopyManagedDisplaySpaces`, `SLSCopySpacesForWindows` | Observe display Spaces and window membership for runtime Bento sessions. | Require complete current-Space coverage and valid typed IDs and containers. Empty membership stays unknown, multi-Space windows float, and fullscreen Spaces suppress automatic writes and dividers. Fall back to inferred session matching when any symbol or topology is unavailable. |
-| `AXWindowIDs` | Resolve a Stage Manager thumbnail to one real member window. | Follow only the bounded WindowManager group/list/button hierarchy. Validate IDs with targeted WindowServer records, reject WindowManager-owned, nonzero-layer, stale, and unknown-owner records, then select the frontmost valid member. Fall back to ordinary hit-testing when the hierarchy or value is unavailable. |
-
-Exact identity and native Space identity stay process-local. BetterTile includes the owning PID and an
-application launch generation in each identity record. It retains AX hashes
-only to correlate observer callbacks. Logs contain capability availability and
-one-time fallback reasons, never titles, AX identifiers, raw desktop topology,
-or Stage Manager contents.
-
-Tabbed reuses the approved exact window identity, with public APIs
-only. AppKit orders BetterTile's own shared Tabbed curtains, tab strips, and empty
-panes relative to selected windows. `CGWindowListCopyWindowInfo` supplies the
-front-to-back order of on-screen normal-level windows, with their numbers,
-owning PIDs, and bounds; BetterTile reads no window titles from it. When a
-inactive tab is in front of any selected tab, the Accessibility raise
-action restores the order without activating an application. The adapter
-checks the owning PID, layer zero, and on-screen record before using a window
-number. The shared curtain needs validated identities for every tab and
-a verified order. If those checks fail, the display has no curtain; chrome
-without an identity floats as before. Unsafe order repairs do not run.
-This adds no private
-symbols, permissions, screen capture, or stored window identifiers.
-
-Divider coverage also reads the public on-screen window list. It uses only
-window number, owner PID, layer, alpha, and bounds. These values determine
-which foreign windows at or below the handle's floating level cover a layout
-seam. It never reads window titles or captures pixels. Exact identities are
-labelled only when the known owner PID matches. Coverage is transient, adds
-no permission, and falls back to the existing obscuring frames if the read
-fails or any requested layout member lacks a validated exact identity. This
-also keeps dividers usable when private APIs are disabled. It does not guess
-an identity from PID and frame. Known exact identities that are absent from
-the on-screen list do not force this fallback. Hover caches the result for at
-most 150 ms; an active drag retains its starting coverage until release.
-
-BetterTile reads the Dock's `orientation` and `autohide` preferences. When
-Leave space for Dock is on, which it is not by default, or when the Dock never
-hides, it also reads the position and size of the Dock's Accessibility list,
-at most once a second, through public APIs only. It reads no Dock item names.
-It keeps the last measured thickness for each Dock edge in its own user
-defaults, so a Dock not yet shown after login still gets its space. With the
-setting off and the Dock hiding automatically, BetterTile does not read the
-Dock list.
-
-The `defaults` commands below use the public app's domain. For BetterTile Debug,
-replace `com.lmckarma.BetterTile` with
-`com.lmckarma.BetterTile.debug`; its preferences are intentionally separate.
-
-All private capabilities can be disabled before launch with:
+To turn all private capabilities off, run this command, then quit and reopen
+BetterTile:
 
 ```sh
 defaults write com.lmckarma.BetterTile disablePrivateAPIs -bool true
 ```
 
-Quit and reopen BetterTile after changing the default. Restore automatic use
-of validated private capabilities with:
-
-```sh
-defaults delete com.lmckarma.BetterTile disablePrivateAPIs
-```
-
-## Network disclosure
-
-BetterTile contacts `github.com` over HTTPS to fetch the public Sparkle appcast
-from `LMC-Karma/BetterTile/releases/latest/download/appcast.xml` and when the
-user chooses to download a release archive. GitHub may redirect release assets
-through its delivery infrastructure. These requests necessarily expose ordinary
-connection metadata such as the requesting IP address to GitHub. Automatic
-checks default to every four hours while BetterTile is running and can be
-disabled in Settings. Sparkle system profiling is disabled.
-
-BetterTile stores only the public display version and build number of a known
-available update in local user defaults so its reminder survives a relaunch.
-It clears that state after the update is installed, skipped, or no longer
-available.
-
-Update archives are authenticated by an EdDSA signature that Sparkle verifies
-against the public key built into the application. That verification is
-independent of the application's macOS code signature.
-
-The Xcode Debug configuration builds **BetterTile Debug** with bundle identifier
-`com.lmckarma.BetterTile.debug`. Sparkle remains embedded because Debug and
-Release share one target, but Debug supplies no feed URL and does not create an
-updater controller or show update controls. It therefore performs no update
-network requests. Release keeps the public feed and updater behavior described
-above.
-
-### Send Feedback
-
-The **Send Feedback…** menu item opens
-`https://github.com/LMC-Karma/BetterTile/issues/new` in the user's default
-browser. The URL carries exactly two query parameters:
-
-- `template=bug.yml`, which selects the public bug report form
-- `title`, a proposed issue title containing the BetterTile marketing version
-  and build number, for example `[Bug] BetterTile 0.1.0 (2): `
-
-Opening the page is itself a request to GitHub: it sends those two query
-parameters, so GitHub receives the BetterTile version and build, along with the
-ordinary connection metadata any web request carries, such as the requesting IP
-address. No issue is created and no form body is submitted until the user fills
-the form in and submits it themselves, and the user can edit or delete every
-field first.
-
-Beyond the version and build in the title, BetterTile places no window
-information, layout or Bento state, configuration, shortcuts, diagnostics,
-analytics, telemetry, crash reports, system profile, or any other user or
-machine data in the URL. This is covered by an automated test.
-
-Any future network feature must serve a documented user-facing purpose,
-minimize transmitted data, use secure transport, and document its endpoints
-and payload purpose here before release. Optional diagnostics require a
-separate design decision, informed opt-in, documented retention, and a clear
-off switch.
-
-## Permissions and dependencies
-
-The application picker reads names and bundle identifiers from running apps and
-from application bundles in `/Applications`, `/System/Applications`, and
-`~/Applications`, including Utilities. The installed list leaves out
-background-only and agent apps and apps inside another app or a helper folder.
-The installed-app catalog is cached in memory for five minutes. Browse uses the
-system application-file picker and can still choose any app. These operations
-request no new permission and send no data. Per-App Rules shows window titles
-from the model's existing observations; it makes no additional Accessibility
-reads and does not persist those titles or the app catalog.
-
-The picker's **Recent** section stores the bundle identifiers of the last eight
-apps chosen in any BetterTile app picker, newest first. It stores no app name,
-path, window title, or time. The list is kept in BetterTile's own `UserDefaults`
-under `recentApplicationBundleIdentifiers` (Debug and Release are separate), is
-never uploaded, exported, or logged, and stays until a later choice pushes an
-entry out. To clear it, quit BetterTile and run
-`defaults delete com.lmckarma.BetterTile recentApplicationBundleIdentifiers`
-(`com.lmckarma.BetterTile.debug` for Debug).
-
-The Tabbed pane **Add App** picker uses that same catalog. Choosing an app
-requests a new window first. A stopped app opens through public
-`NSWorkspace.openApplication(at:configuration:)`, without activation, a new
-process-instance flag, custom arguments, documents, URLs, or Apple events.
-Launching an app does not guarantee a window. For a running app, the
-coordinator first looks for an enabled **New Window** Accessibility menu item
-with the public `AXPress` action. Otherwise it looks for Command-N using
-`AXMenuItemCmdChar` (`N` or `n`) and `AXMenuItemCmdModifiers` equal to 0
-(Command alone). Shift, Option, Control, missing modifier values, and the
-NoCommand bit do not qualify. File is the first top-level menu after the
-application menu, identified by position rather than the File title. The app's
-localized name identifies its application menu even when Apple precedes it.
-Bare Command-N qualifies only in this positional File menu. If that anchor is
-unavailable, bare Command-N never qualifies. Complete window-title commands
-retain their unique-match fallback across top-level menus. Without a safe
-command, BetterTile uses reopen.
-Discovery reads at most 32 menu-bar entries and 128 direct items per menu,
-on a background task with a 0.5-second deadline. Before each read it sets the
-public AX messaging timeout to at most 50 ms, bounded by the remaining budget;
-it retains the existing hung-app gate. It opens no menu or submenu to discover lazy items. Disabled, ambiguous, missing,
-or failed commands use the reopen or existing-window fallback. The selected command is
-read and validated again before `AXPress`. No keyboard events are injected.
-
-Choosing an app automatically requests a window without a consent question.
-Exact **New Window** takes priority, then a recognized complete window title
-(English **New Finder Window** / **New Viewer Window**, and the existing small
-French, German, Spanish, Italian and Japanese **New Window** table), then a
-allow-listed command-only ⌘N. Its title must be exactly **New**, **New Document**,
-**New File**, or a recognized window title. The small generic-document table
-also accepts French **Nouveau / Nouveau document / Nouveau fichier**, German
-**Neu / Neues Dokument / Neue Datei**, Spanish **Nuevo / Nuevo documento /
-Nuevo archivo**, Italian **Nuovo / Nuovo documento / Nuovo file**, and Japanese
-**新規 / 新規書類 / 新規ファイル** in that system language. Every other title,
-including **New Recording**, **New Event**, **New Card**, **New Note**, and
-**New Message**, uses reopen, then **Use a window from this desktop** if no
-eligible new window arrives. TextEdit's New Document can show an Open panel,
-which is never auto-placed.
-
-BetterTile stores no command answer. If no safe
-menu command exists, BetterTile validates the selected process and bundle URL,
-asks macOS to reopen the existing app through `NSWorkspace.openApplication`
-at the running process's validated bundle URL, not a different installed or
-browsed copy. The pane request disables activation and makes no preliminary
-activation call. The request sends no custom arguments, documents, URLs or
-Apple events, and does not request a new process instance. One request
-dispatches at most one successful open operation: a dispatched command is never
-followed by reopen. Reopening can restore a window or switch desktops; placement
-cancels if the destination changes. A running app has 10 seconds to open a new eligible window; a cold launch has
-30 seconds. Without an arrival, it offers **Use a window**.
-
-Several instances use the active instance, then the frontmost instance in the
-public on-screen window list. Without either, BetterTile offers explicit window
-choices and reports **Several copies are running**. This reads process IDs and layers, never titles
-or pixels. The pane publishes **Opening…** before asynchronous window inventory
-or menu discovery. Automatic placement raises the new window only while the
-user's request focus intent remains current. One MainActor-owned in-memory
-record coordinates intent across all pending pane requests.
-It knows their targets and expected launch, menu and reopen activations. Those
-activations cannot become another request's user choice. Failed operations
-clear their expectation; completion and cancellation unregister the request.
-A genuine activation of another app suppresses raising, including if the user
-later returns to the source app. The coordinator checks this after frame writes.
-
-A fresh hit-tested mouse-down on any window, including a target, records the
-latest user choice even when that app is already frontmost. The shared
-listen-only event tap and its existing AppKit left-mouse-down fallback both
-forward these choices. Observation remains enabled while any request is pending,
-even with snapping and linked resizing off. The hit-tested window must contain
-the point. The event must be within the request lifetime and no more than one
-second old. Pointer
-points and event timestamps remain transient.
-
-After successful automatic pane placement, the shared record can restore the latest user app. The
-coordinator sets the public Accessibility frontmost attribute on the chosen
-process: the clicked window's process, or the process that activated. BetterTile
-is inactive at that moment, and since macOS 14 a public
-`NSRunningApplication.activate` request from an inactive app can be declined.
-That request is only the fallback when Accessibility refuses. Without a known
-process, only a single running copy of the app qualifies. A qualifying completed request keeps
-its in-memory helper for at most two seconds after placement or the terminal
-state, whichever is later. One expiry task releases it. A later target
-activation can trigger the same one-shot restore during that window.
-Restoration requires a requested target frontmost and a different latest user
-choice. Explicit target clicks and newer app choices take precedence across
-requests. Each genuine choice permits at most one restoration attempt across
-all requests. The attempt is consumed before activation, and its activation is
-expected rather than a new choice. A later target activation alone cannot
-authorize another attempt.
-
-The public keyboard-event counter (`CGEventSource.counterForEventType` with
-`.combinedSessionState` and `.keyDown`) distinguishes newer keyboard switches to
-a target and suppresses restoration after other newer keyboard input. Mouse
-clicks, activation notifications and modifier-only events do not increment it.
-Each recorded user choice takes a new baseline. BetterTile
-reads only the aggregate count, not key codes, characters, event payloads or
-text. Typing in Source can therefore conservatively leave a later self-activating
-target frontmost. No keyboard event tap or repeated activation is added.
-`request-focus` debug and info logs include the aggregate count, bundle IDs,
-process IDs, request phase, choice source, restore reason and activation
-result. They contain no window title, pointer point, key code, character or app
-content. No intent or input history is persisted by
-BetterTile. No permission, dependency, private API or network request is added.
-
-The pane picker and Layout Gallery use BetterTile-owned nonactivating panels.
-Showing or dismissing either panel does not activate BetterTile or restore a
-previous app. Clicking a search field can give its panel keyboard focus without
-activating BetterTile. The panels stay on their opening Space and close when
-their pane, display, Space or Tabbed mode ends. For outside-click dismissal,
-`SharedGestureEventMonitor` forwards the existing listen-only left mouse-down
-point. If that tap is unavailable, `DragSnapController` forwards its existing
-global NSEvent left-mouse-down monitor for other apps instead. Global AppKit
-monitors do not receive BetterTile's own events. While either chooser is open,
-its presenter also installs a local NSEvent left/right mouse-down monitor for
-BetterTile windows and a global right-mouse-down monitor for other apps. The
-local monitor observes synchronously before control dispatch and returns the
-event unchanged. Dismissal removes both temporary monitors. The existing left
-observation paths remain enabled even if snapping is off. Each path compares
-only the transient screen point and timestamp with the panel frame and opening
-time; inside clicks and delayed opener samples do not dismiss it. This adds no
-permission, private API, saved pointer history or networking. Escape closes a
-panel that has keyboard focus.
-
-One in-memory request holds the chosen app's name, bundle identifier and bundle
-URL; PID and launch date; destination display, pane, session, current Space and
-generation; existing and arriving window identities and their request-local
-arrival order; and a 10-second running-app or 30-second cold-launch deadline.
-The public launch and menu APIs return no causal window identity. The user-approved
-automatic policy accepts the first eligible new window ID in creation order
-(or first-observed order without creation evidence) from the requested
-process within the request deadline. Pane requests exclude every baseline
-identity, other displays and desktops, multi-Space windows, dialogs, sheets and
-fixed-size windows. For a running process, an exact creation callback or a resolved
-creation-element token must identify the new ID after the request starts. A
-restored pre-existing window cannot authorize automatic placement. After a new
-process launch, its first eligible window can be placed without a callback.
-Placement uses the existing coordinator transaction and brings the placed window
-forward. This correlation is bounded policy, not proof that AXPress caused the
-window; a concurrent new document of that same process can qualify.
-
-Choosing an app closes the picker and shows progress in its pane. Existing or
-unconfirmed windows retain explicit **Use here** / **Place window** choices.
-The existing listen-only gesture stream can also confirm an unverified arrival
-with hit-tested mouse-down, mouse-up within 4 points, and a focused-window read
-250 ms later. Focus alone does not authorize that fallback choice. Points and
-times stay only in memory. There is no new permission. With the shared tap off
-or unavailable, the AppKit fallback also adds listen-only left-mouse drag and
-mouse-up monitors while a request is pending, so that click can complete. The
-picker
-can expand current-desktop windows inline. Titles come from current observations
-and are never saved. **Show App** activates the validated process. While choices
-are offered, further arrivals remain reserved outside the layout.
-Choices revalidate eligibility, app, current display and current-desktop membership through preflight and delayed placement. Picker
-choices receive no cross-display drag exemption.
-
-Cancel, owner loss, timeout and failed requests discard the destination. A
-30-second in-memory guard retains the app identifier, PID/launch date when
-known, and baseline window identities. On Tabbed desktops, newly observed windows of that request
-stay floating, without measurement or frame writes, and another creation for
-the same app waits for that guard to expire. The pane's explicit **Try Again**
-action can repeat the request while retaining the earlier guard. Offering choices leaves this guard because the dispatched request may still
-create another window. Successful automatic or explicit placement retains the
-guard for further arrivals. After expiry, ordinary arrival
-policy resumes; already observed floats remain floating. These records, titles and choices are never saved or logged.
-Shutdown clears them. Cancelling does not quit the app or close its windows.
-Placement and frame/layout Undo use the existing coordinator transactions;
-Undo cannot reverse application launch or window creation.
-
-**Launch at login** in General registers the BetterTile app itself as a login
-item with the public `SMAppService.mainApp` API, only when the user turns the
-switch on, and unregisters it when the switch is turned off. It adds no helper,
-daemon, agent, privileged component or permission. macOS stores the state and
-may ask the user to allow it in System Settings › General › Login Items; the
-switch then offers that pane. BetterTile's configuration does not store it.
-
-Accessibility is the only macOS permission BetterTile requests. A new
-permission or privileged component requires an explicit design review,
-least-privilege justification, repository documentation, and an in-product
-explanation before the system prompt appears.
-
-BetterTile attempts one public, listen-only session `CGEventTap` for global
-left-button gesture ordering only after Accessibility access is present. It
-never calls the API that requests Input Monitoring. If the existing grant is
-insufficient, tap creation fails, or a disabled tap cannot be re-enabled, both
-gesture consumers return to their public `NSEvent` monitors automatically.
-The tap copies only scalar position, button, modifier, timestamp, and event-kind
-values to the main actor. It neither changes nor retains system events.
-
-The main actor uses public `NSWindow.windowNumber(at:belowWindowWithWindowNumber:)`
-hit testing at mouse-down to keep BetterTile's AppKit controls out of native
-window dragging and linked resizing. It compares the returned number only with
-BetterTile's own windows and skips its click-through drawing. No foreign title,
-geometry, or content is read. The number is discarded immediately; one Boolean
-retains input ownership through release. Chooser and application-request
-observations still receive those events. This adds no permission, private API,
-dependency, log, persisted identity, or network use.
-
-The tap can be turned off before launch, which returns both gesture consumers to
-their `NSEvent` monitors:
-
-```sh
-defaults write com.lmckarma.BetterTile disableSharedGestureEvents -bool true
-```
-
-Quit and reopen BetterTile after changing the default. Restore the tap with
-`defaults delete com.lmckarma.BetterTile disableSharedGestureEvents`.
-
-When Layout Wheel's keyboard trigger is enabled, BetterTile uses matching local
-and global AppKit monitors for modifier changes. The pair keeps the trigger
-available whether BetterTile or another app receives the event. Matching key
-monitors exist only from the start of the activation hold through the end of
-that gesture. Matching pointer monitors exist only while the keyboard-triggered
-wheel is open. A Right Control hold also installs local and global left/right
-mouse-down monitors while pending or open. They use only the event kind and
-cancel the hold so Control-click cannot apply a wheel command. They pass clicks
-through and retain no events. Global monitors and the local modifier and pointer
-monitors are observation-only. While the wheel is open, the local key monitor consumes only
-Escape, Return, Tab, and arrow keys after the wheel handles them, so they do not
-also activate BetterTile's own focused Settings controls. Other local keys pass
-through, and no event delivered to another application is changed. The monitors
-retain no system events and forward only the modifier set, key code, or pointer
-position needed by the gesture state machine.
-
-Layout Wheel activation diagnostics use the local unified log's `LayoutWheel`
-category at debug level. Each hold records a process-local counter, scheduling
-and deadline milestones, elapsed milliseconds, and one open, cancellation, or
-skip outcome with a fixed reason. An open adds the wheel style, its size scale,
-and whether a focused window was captured. An ignored trigger adds whether the
-trigger is enabled, armed and idle. A release adds the number of pointer samples
-received. These values distinguish delayed notifications and monitor failures
-from a missed deadline. They contain no key codes, modifier values, pointer
-positions or distances, selected commands, app or window identities, titles, or
-event content. They add no
-input monitoring, permission, file, upload, or persisted configuration.
-
-Tabbed mode installs local and global AppKit key monitors while a tab drag or
-pane divider resize is in progress. They are removed when the gesture ends,
-is cancelled, or the pane overlay hides. Auto-hide tab bars also install a
-local and global key-monitor pair while any bar is revealed, so Escape can
-dismiss the bars while the selected app keeps focus. That pair is removed
-when all bars collapse, the presentation changes, or the overlay hides.
-Both pairs forward only the key code. Escape cancels the gesture or dismisses
-the bars; global monitors only observe it, and local monitors consume Escape
-and pass other keys through. No other keys are acted on or retained.
-The Auto-hide local monitor passes Escape through while a Tabbed chooser is
-key, so its field editor can cancel composition or clear search before closing.
-
-While a Tabbed desktop uses Auto-hide, its overlay also installs a local and a
-global AppKit pointer monitor for mouse-moved and left and right mouse-dragged
-events. The pair exists the whole time Auto-hide is active, not only while a bar
-is revealed, so it receives every pointer move in every app. Each display with an
-Auto-hide desktop has its own pair. For each event, the overlay reads only the
-current pointer location and compares it with the strip areas. It reads no other
-event content, and it does not change or consume the event. It retains no event
-and no pointer location; only the strip's revealed or hidden state remains. The
-pair is removed when the presentation leaves Auto-hide, when the desktop's Space
-becomes inactive, and when the overlay hides. The monitors add no permission and
-no prompt.
-
-Layout Wheel also has an independent, disabled-by-default Middle Click trigger.
-The user benefit is one-handed wheel activation. While the option is enabled,
-BetterTile creates a dedicated public session `CGEventTap` for
-`otherMouseDown`, `otherMouseDragged`, and `otherMouseUp`. It suppresses only
-physical button 2 with the selected modifier predicate: no ordinary modifiers
-for Middle click, or Option alone for Option + Middle click. The latter keeps
-plain middle-click available to other apps. Every other button and modifier
-combination passes through. The choice is opt-in and mutually exclusive. The
-tap captures ownership at button-down and reserves drag/up even if Option is
-released during the gesture. Keyboard activation blocks new mouse reservations;
-a reserved mouse gesture blocks keyboard activation through its button-up. The tap forwards only scalar position, button,
-modifier, timestamp, and event-kind values. It does not retain the system
-event.
-
-A disabled middle-click tap is re-enabled when no mouse gesture is reserved.
-If recovery fails, the tap cannot start, or input continuity is lost during a
-reserved gesture, BetterTile tears it down,
-cancels any gesture it owns, and reports the failure in Layout Wheel Settings.
-Keyboard activation remains available. The saved Middle Click preference is
-preserved so BetterTile can retry after a later lifecycle or configuration
-refresh. The separate recovery switch below prevents the suppressing tap from
-starting without changing the saved preference:
-
-```sh
-defaults write com.lmckarma.BetterTile disableLayoutWheelMiddleClick -bool true
-```
-
-Quit and reopen BetterTile after changing the default. Restore automatic use
-with
-`defaults delete com.lmckarma.BetterTile disableLayoutWheelMiddleClick`.
-
-BetterTile does not call the API that requests Input Monitoring for either tap.
-Both taps have the signed-build validation recorded below.
-
-The maintainer approved the expanded trigger scope: Option + Middle click changes the middle-click tap's suppression predicate, and
-Right Control retains the virtual key code and raw side-specific flags.
-It uses the public
-`IOKit/hidsystem/IOLLEvent.h` masks and AppKit flags-changed events. Ambiguous
-side identity cancels; it never falls back to either Control key. Right Control
-remains hidden behind a validation flag until the actual keyboard and Jump
-Desktop client have been checked. No additional event tap, permission, raw HID
-access, network operation, or dependency is introduced.
-
-The Option + Middle click extension has fake-system tests for the down-time
-predicate, ownership through modifier changes, competing triggers, and failure
-cancellation. On macOS 27.0.1, a signed Debug build applied Top Half in five
-Option + Middle click trials and five Control + Option + Command trials with
-a foreground fixture on the test display. Plain middle-click reached the fixture.
-Mouse-first and keyboard-first ownership checks also passed. These trials used
-synthetic system events; they do not validate physical Right Control identity or
-Jump Desktop delivery. The approved scope covers Option + Middle click and
-Right Control; physical keyboard and Jump Desktop validation remain required
-before exposing Right Control without its validation flag.
-
-Each tap has its own maintainer design and least-privilege review. The
-left-button gesture tap is recorded in
-[pull request #36](https://github.com/LMC-Karma/BetterTile/pull/36). The
-suppressing middle-click tap is recorded in
-[pull request #56](https://github.com/LMC-Karma/BetterTile/pull/56); pull
-request #36 predates that tap and does not cover it.
-
-Validation on macOS 26.5.2 confirmed that a personally signed build with
-Accessibility granted created the left-button tap without an Input Monitoring
-prompt and did not appear in the Input Monitoring application list. Validation
-on macOS 26.6.2 confirmed the same behavior for the suppressing middle-click
-tap. Middle-button events reached a browser canvas before enablement, were
-reserved while enabled, and reached the canvas again immediately after
-disablement. The Setup Assistant and Settings explain the observed event scope
-before the Accessibility request.
-
-Runtime dependencies are allowed after reviewing necessity, maintenance,
-security history, license compatibility, update strategy, and removal cost.
-Approved dependencies are pinned and recorded in
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Adapted code must have clear
-provenance, compatible licensing, and attribution.
-
-Sparkle is the sole current runtime dependency. It verifies BetterTile update
-archives with an EdDSA signature. Its private signing key remains outside the
-repository and GitHub Actions.
-
-Dependabot proposes weekly update pull requests for Sparkle and for the
-SHA-pinned GitHub Actions on `main` and `gh-pages`. It only opens pull
-requests. Each one gets the same review as any other dependency change, and
-nothing merges automatically. The repository allows only GitHub-owned actions
-plus the reviewed Claude review action and its setup dependency, and requires
-every action to be pinned to a full commit SHA.
-
-## Build-time Metal Toolchain
-
-The Layout Wheel compiles its shader with Apple's Metal Toolchain, an Xcode
-component. CI checks the selected Xcode first and installs it (download or
-cached import) only when it is missing. It uses
-`xcodebuild -downloadComponent MetalToolchain` and a SHA-pinned `actions/cache`
-dependency. Exported components are keyed by Xcode version, runner OS and
-architecture. Cache entries are branch-scoped. Only Apple's developer
-tool downloads and GitHub Actions cache storage are used. No user data or
-release signing credentials are involved. This is a build dependency under
-Xcode's license, not an additional runtime package or app permission.
-
-The setup fails if download or import fails. Shell regression tests cover cache
-misses, reuse, invalid exports and command failures; Debug and Release builds
-check shader compilation. Removing the CI cache only causes a fresh download.
-
-## CI build cache
-
-CI reuses SwiftPM's `.build` directory to reduce repeated dependency downloads
-and compilation in `unit-tests` (Debug). On the same runner type, a warm cache
-cut that job's build from 556.7 s to 439.7 s in one cold and one warm run.
-`app` does not cache its SwiftPM Release build: a warm cache saved only
-6 s there, which does not justify the storage and the save step. Xcode
-application builds do not cache DerivedData; its benefit has not been measured.
-The existing Metal Toolchain cache remains available to all macOS jobs.
-
-The cache uses GitHub's MIT-licensed `actions/cache/restore` and
-`actions/cache/save`, pinned to `55cc8345863c7cc4c66a329aec7e433d2d1c52a9`
-from the official `v6.1.0` tag, which runs on Node.js 24. This reuses the dependency already used
-for Metal. The dependency review covers its CI-only scope, immutable pin,
-trusted saves, cache isolation, and removal without build-command changes.
-Pin updates require review; this change does not independently audit the
-action's implementation or security history.
-
-Pull requests restore caches but never save them. Only pushes to `main`,
-scheduled runs on `main`, and manual workflow dispatches save. Dispatch requires
-repository write access.
-The Metal cache follows the same save rule. Cache access uses GitHub Actions'
-cache service and runner credentials with `contents: read`; it adds no token
-or repository write permission. Cached files contain dependency checkouts and
-generated build files, not user data or release signing credentials. Caches
-are not secret storage and can be read by pull requests under GitHub's cache
-access rules. Nothing is added to the shipped app.
-
-SwiftPM keys include runner OS and architecture, the full `xcodebuild -version`
-fingerprint, job, configuration (Debug), `Package.resolved`, `Package.swift`, and source
-commit. Fallbacks omit only the source commit, so changed dependencies or
-toolchains cannot restore old build products. Every build and test command
-still runs, including on exact cache hits; SwiftPM checks changed sources.
-Cache misses run the existing commands from a clean build directory. Removing
-the cache restores the previous build behavior. Local workflow checks cover
-YAML syntax and the unchanged test timing rules; hosted cache behavior and
-build-time measurements are maintainer checks with `workflow_dispatch` runs.
-
-## CI runner recovery
-
-`.github/workflows/rerun-unacquired.yml` uses `workflow_run` for completed CI
-runs. It recovers GitHub runner-capacity failures without retrying tests that
-ran. Only failed runs at attempt 1 or 2 qualify, so there are at most two
-automatic reruns. GitHub's failed-jobs rerun also repeats dependent jobs such as
-the required `test` aggregate.
-
-The workflow has only `actions: write` (list jobs and rerun failed jobs) and
-`checks: read` (read runner-acquisition annotations). All unspecified token
-permissions are disabled. These permissions belong only to this Ubuntu
-workflow; CI retains `contents: read`. Authentication uses the ephemeral
-`GITHUB_TOKEN`, with no added secret, checkout, artifact download, cache access,
-third-party action, or execution of PR code. It reads job metadata and check
-annotations through GitHub's API and sends only the run ID for a rerun. No app
-user data or release credentials are involved.
-
-The decision checks jobs from the event's exact attempt. Excluding `test`,
-every failed or cancelled job must have an empty steps array, or only unstarted
-step placeholders and an annotation containing `not acquired by Runner`.
-Missing step data blocks recovery. Any step with execution evidence blocks
-recovery even if a runner annotation is also present. This preserves the
-no-retry rule for flaky tests. If only the aggregate failed, no rerun occurs.
-Before posting, it checks that the same failed attempt is still completed.
-Payload values enter through environment variables, with numeric ID and attempt
-validation. API paths stay within the repository; payload URLs are never fetched
-and annotations are parsed as data, never executed.
-
-Review this privileged trigger and its filters when changing it. Local checks
-replay the decision against recorded capacity failures and real test failures,
-and exercise refusal paths with fixtures. Token permissions, event delivery
-and the rerun POST remain post-merge checks; local verification never posts a
-rerun. Remove or disable `rerun-unacquired.yml` to stop recovery and remove its
-write permission. Normal CI checks continue without automatic recovery.
-
-The Ubuntu `guards` job installs `libxml2-utils` from Ubuntu's package archive
-for the portable appcast test's `xmllint` command. It is a CI-only system tool
-under libxml2's MIT license, with no shipped dependency or added token permission.
-The test uses fixture XML and a stubbed network command. Remove the install step
-and move the appcast test back to macOS to remove this build-time dependency.
-
-## Saved Layout files
-
-Only layout format version 2 is accepted. An unsupported layout remains in the
-library as an unreadable entry with a reason. Reading, Import, Apply and
-Automatic Apply refuse it without rewriting, renaming or deleting the file.
-
-`App Groups.json` is a local file beside the Saved Layouts folder. It stores
-group names, app display names and bundle IDs only. BetterTile never sends it
-anywhere. Layout exports may embed the App Groups they use in an export-only
-`appGroups` member. This adds no permission,
-network use or dependency.
-
-The Saved Layouts page stores its expanded/collapsed display-binding section as
-`savedLayoutsBindingsExpanded` in the app's local UserDefaults. It defaults to
-expanded and contains only a Boolean. It is not exported or uploaded and does
-not enable Automatic Apply. Removing the key restores the default.
-
-The Saved Layouts editor lets users prepare and exchange a layout without
-capturing or controlling live windows. This is the user benefit for storing
-app assignments. The editor stores local declarative files;
-it adds no executable configuration, network endpoint, runtime dependency,
-permission, private API, or application launch.
-
-A library file stores a versioned `SavedLayoutDocument`: layout name, mode
-(`manual`, `bento`, or `tabbed-v1`), pane gap, slot IDs, app bundle IDs and
-App Group names in ordered `prefer` lists, `extraWindows`, `keepForNewWindows`,
-relative rectangles, split axes and ratios, Tabbed tab groups, selected slot,
-and deliberate floats. BetterTile writes header comments on save. Application
-names, installation URLs, native display or Space IDs, process IDs, window IDs,
-window titles, document paths, and AX handles are not copied into library files.
-The shared application picker supplies bundle IDs. Resolved app names and
-installation URLs are used for presentation only and stay in memory.
-
-Library files live in `~/Library/Application Support/BetterTile/Saved Layouts/`.
-Debug uses the separate `BetterTile Debug/Saved Layouts/` directory. Files
-remain until the user deletes them. There is no telemetry, upload, retention
-service, or automatic purge. Import reads the file the user selects and keeps
-it unchanged; Save As creates a library copy. Export writes JSON only to a
-user-selected destination through a native save panel. Exported files remain
-at that destination until the user removes them. They can disclose the user's
-chosen layout name and desired apps if the user shares them. Applying a Saved Layout arranges eligible open windows without opening apps.
-
-Reviewable rationale: keep storage in the app layer and reuse the Core
-validator for every editor/import/export boundary. This avoids a second
-configuration schema and keeps OS identities out of persistence. Generated
-file names separate names from paths. Existing files are atomically replaced
-only after a byte comparison under native file coordination. External edits
-block save/delete; invalid input and write failures retain the source file
-and last valid draft. This protects normal coordinated external editing;
-the editor does not watch files. The app-owned action catalog observes changes
-with public file-system sources, as described below. The library uses regular
-files, rejects symlink input, and enforces a 1 MiB input limit before decoding.
-The most recent rejected input within that limit remains in memory until
-another invalid read replaces it or the editor session ends; oversized or unreadable input stays on disk without an unbounded read.
-No recovery copies or source paths are persisted elsewhere.
-
-During a Saved Layouts canvas drag, BetterTile installs a temporary local
-`keyDown` monitor. It runs only during the drag, reads only the key code to
-detect Escape, and consumes Escape. BetterTile removes it when the drag ends.
-It retains nothing and adds no permission. During the drag BetterTile also reads
-the system-wide time since the last key-down using
-`CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .keyDown)`.
-It reads no key identity and does not retain the timing value.
-
-
-Automated editor tests cover app-assignment payload minimization, validation,
-geometry and state transitions, byte conflicts, invalid reload/import,
-read/write/export failure preservation, and library ownership. Offscreen native
-Settings tests use isolated temporary storage and no live Accessibility.
-[Saved Layouts](docs/SAVED_LAYOUTS.md) documents the UI and exact schema.
-
-### Saved Layouts Apply, Undo, and Save Current Layout
-
-Apply arranges eligible open windows on one display's current desktop. It never
-launches an app or requests a window. User-started Apply can reuse a window
-matching a preference from another visible display when it is unreserved and
-belongs to no Adaptive or Tabbed pane there. Exact current-desktop membership
-and both displays are revalidated. Automatic Apply uses only the target display.
-No Apply takes a window from another desktop. Ignore rules exclude windows.
-Apply refuses a target that is fullscreen, uses Stage Manager, is settling, or
-waits for Repair Layout.
-
-Window writes go through `WindowCoordinator` and revalidate participants.
-Owner-guarded batches revalidate before each window's frame write and each
-rollback write, including required and hidden Tabbed windows. If ownership
-changes after a partial write, restoration stops and the result requires
-Repair Layout on the affected desktop. Unguarded batches retain concurrent
-application writes.
-Escape cancels through the final input checkpoint before session commit,
-including input queued during frame writes. Once final validation and session
-commit begin, a later Escape does not cancel that Apply. Cancellation restores
-the pre-Apply frames while the same desktop owner remains valid. At the
-checkpoint, other queued input also runs through AppKit's normal dispatch.
-Apply revalidates the desktop owner and coordinator mutation generations before
-committing the session. This uses no additional event tap, permission or
-keyboard history.
-Undo restores the previous session and frames only while the touched desktops
-remain visible and their mode, preset and pane membership have not changed.
-A transferred window's source desktop is included in this check. A repeat Apply
-that writes no frame and changes no session keeps the original Undo checkpoint.
-Save Current Layout and Update
-from Current Desktop read eligible windows and save relative geometry and app
-preferences, without titles, document paths, display, desktop or window identity.
-Following a layout is in memory only.
-
-During Apply, local and global AppKit key-down monitors detect Escape. They read
-only the key code, retain nothing, and are removed when Apply ends. The **Choose
-Window** list displays live window titles. Those titles stay in memory and are
-never saved, exported, or logged. Snapshots from `knownWindows()` used to report
-windows on another desktop also stay in memory only.
-
-### Saved Layout position hints
-
-User-started Apply optionally stores `Saved Layout Positions.cache` in the
-Saved Layouts support folder (separate Debug directory as above). It holds
-normalized verified post-commit frames, keyed only by library file name and
-slot ID. It holds no native window ID, PID, window title, document content or
-additional bundle data. It does not monitor later user adjustments. This local
-cache improves repeated same-app window matching after relaunch. It is not
-uploaded, exported or added to configuration schema 12 or layout files.
-
-Reads reject symlinks, nonregular files, invalid paths, versions and rectangles,
-and are bounded to 256 KiB. Invalid or oversized caches are ignored and preserved;
-cache failures never block Apply. Coordinated atomic writes prune missing layouts
-and evict older library entries to remain within 256 layouts and the byte bound.
-Delete removes that layout's hints. Update retains only unchanged slot-ID/app
-pairs. Undo conditionally restores prior hints only after a successful restore,
-and cannot overwrite a newer write. Failed and rolled-back placements save nothing.
-Removing this optional cache resets the hints. Preview reads the same eligible
-plan as Apply without starting requests, creating reservations or writing windows.
-
-### Saved Layout actions on this Mac
-
-`Layout Actions.json` sits beside `Display Triggers.json`, outside the Saved
-Layouts folder. It is optional and keyed by the library file name. Each entry
-holds one keyboard shortcut (virtual key code, modifiers and its key label) and
-two booleans: show in the menu bar panel and show in the Layout Wheel. It holds
-no window titles, IDs, PIDs, frames, app bundle data, display identity or history.
-The benefit is Apply without opening Settings. Nothing is uploaded or included
-in a layout import/export, and configuration schema 12 is unchanged. Older
-builds ignore the separate file.
-
-Reads reject links, nonregular files, unsupported versions, more than 1,024
-entries and files over 256 KiB, with a bounded read. Invalid data is ignored and
-kept; writing remains blocked until it loads successfully. Coordinated writes
-compare the last-read bytes before atomically replacing the file. A layout's
-entry is removed when a readable library confirms its file was deleted or
-renamed. A missing folder retains the settings until it can be listed again;
-absent layouts cannot register actions. Renaming the layout's displayed name or
-updating the same file retains its settings.
-
-While the runtime action catalog is active, public Dispatch file-system sources
-watch at most two directory roots: the library and its surviving parent. One
-public FSEvents stream observes file changes below the configured parent once
-that parent exists. The roots and stream count do not grow with the library.
-No layout file descriptor is kept open. In-place edits, atomic replacements and
-folder recreation trigger coalesced metadata checks, including with Settings
-closed. Dropped events and root changes force a rescan and reattach the stream.
-
-The stream starts at current events; it does not request filesystem event history.
-Unrelated sibling paths are discarded after filtering and are not logged or
-saved; their contents are not read. File identity and modification/change
-timestamps remain in memory. Missing parents are followed with directory sources
-rather than a recursive stream over unrelated Application Support folders.
-There is no repeating timer. Stop, shutdown and destruction cancel pending work,
-release the stream and its callback context, and close directory descriptors.
-If the stream cannot start, directory additions/removals remain observed and
-Reload retries full file observation. Existing bounded reads and file validation
-still apply. This uses only local metadata and declarative layout data; it adds
-no permission, third-party dependency, networking, persisted user data or AX
-inventory.
-The existing Carbon hot-key monitor registers local layout shortcuts alongside
-window-action shortcuts. Recording suspends dispatch. Conflicts with BetterTile
-bindings and known system combinations are refused; Carbon registration failure
-is shown inline. Public APIs do not expose every user-defined system/other-app
-shortcut, so Settings explains that limit. Input is not recorded or uploaded.
-The target-display provenance is in memory for this session only: a managed
-focus observation or a BetterTile action can remember a display; reconciliation,
-launch initialization and display refresh cannot. Disconnect clears it.
-
-### Saved Layouts display bindings
-
-The Saved Layouts card can bind a layout to one display in an exact display set.
-This adds local data that can identify the user's hardware.
-
-- **What is stored.** For each display in a bound set: the display UUID, vendor
-  number, model number, **serial number** (0 when the display reports none), a
-  built-in flag, the display name, and its frame. The binding also stores the
-  layout file name and two switches that are off by default.
-- **Where.** `Display Triggers.json` in
-  `~/Library/Application Support/BetterTile/` (`BetterTile Debug/` for Debug),
-  next to the Saved Layouts folder. It is never uploaded, exported, logged, or
-  added to a layout file. There is no telemetry.
-- **How long.** Until the user presses **Remove** for the binding, selects the
-  delete dialog’s **Also remove this layout’s display binding** checkbox, or
-  deletes the bindings file. Deleting a layout file alone keeps its binding.
-  Settings lists it as "Layout missing" with **Remove**. Automatic Apply silently
-  skips a missing layout on connect; an existing but unreadable layout still
-  reports a failure.
-- **Source.** Public CoreGraphics and AppKit calls only. No private API.
-- **Handling.** The read is limited to 256 KiB. BetterTile refuses a symbolic
-  link or a folder, accepts only a plain `.json` layout file name, and writes
-  through native file coordination after a byte comparison. A corrupt or
-  newer-version file is reported and kept; BetterTile never overwrites it.
-- **Not added.** No permission, dependency, or network use. The two switches
-  are off by default; they enable the automatic Apply described below.
-
-#### Automatic Apply
-
-With **Apply when these displays connect** on, BetterTile applies the layout
-to the bound display after the display set connects. This is a window write that
-the user did not trigger at that moment, so it is limited:
-
-- **Opt in.** Each binding starts off. Only an exact display-set match applies. An
-  uncertain match only offers an Apply button.
-- **Same engine.** It uses the Apply path of **Apply**: current desktop of one
-  display, revalidation before every write, one Undo step for each display. It
-  never opens or launches an app, and
-  never moves a window from another desktop. It does not request new windows.
-- **Stops on input.** While it waits or applies, a temporary AppKit mouse-down and
-  key-down monitor cancels it. The monitor reads the event kind only, keeps
-  nothing, and is removed when the wait ends. It is not installed otherwise.
-- **No loop.** One connect applies once. A failed attempt, or one that input
-  cancelled, is not retried, and a repeated display notification does not
-  start another. One bounded exception: when a display change interrupts a
-  started attempt before it places any window, the same task waits for the
-  display hold to settle and the display to be ready, revalidates the binding,
-  and applies once more. Input still cancels that wait and attempt. The wait
-  lasts until the hold ends, then at most the settle limit. A second
-  interruption, a lock or a session switch gets no further attempt.
-- **Data and permissions.** No new permission, private API, dependency or
-  network use. It reads window frames through the same Accessibility path that
-  Apply uses, and only while a wait is pending. It also reads the frontmost app’s
-  bundle identifier through NSWorkspace and observes session active/resign
-  notifications to hold attempts at the lock screen or during a switched-out
-  session. A hold cancels a started automatic Apply and blocks further frame
-  writes, including restoration. Unused pending attempts settle again after
-  the user returns. A started attempt is not retried after a lock or a session
-  switch; only the display-change continuation above applies. Cancellation
-  shows no result pill while the session is held. If windows were left
-  changed, the result appears once after return; incomplete recovery explains
-  Undo or Repair Layout.
-  These transient identifiers and notifications are not stored or logged.
-- **Visible.** When windows change, a Result pill offers **Undo** and **Details**.
-  Nothing to place or an already arranged layout produces no pill.
-
-Tests cover the matcher, the file format, unknown keys, bounds, corrupt and
-conflicting files, atomic writes, and the card states with a fake display reader.
-Real multi-display behavior and identity values on real hardware remain manual
-checks.
-
-## App icon customization
-
-The App icon picker saves a local `BetterTileAppIcon` preference and changes
-BetterTile's Dock and Finder icons through public AppKit APIs. A Finder
-override writes generated icon data and Finder metadata at the running app
-bundle's root. It requires a writable app and never requests elevation. A
-failed write is reported in Settings when the user selects an icon, or resets
-Startup to its default while an icon choice is saved; the saved choice remains
-available for the Dock and for the next launch. A fresh install, and a reset
-without a saved choice, do not replace a custom icon the user set outside
-BetterTile.
-
-This operation does not change the executable, Info.plist, signed resources,
-or signing identity, and does not re-sign the app. Ordinary signature
-verification passes in the isolated integration test. Strict signature
-verification rejects the Finder metadata while a custom icon is active;
-selecting the default Dark icon clears the override and restores strict
-verification. Release packaging retains its existing strict checks. No
-permission, private API, dependency, telemetry, or network request is added.
-See [icon validation and limits](docs/icon-composer/README.md#finder-metadata-and-signature-checks).
-
-## Distribution
-
-Public beta builds are signed with the maintainer-held, self-signed
-`BetterTile Beta` certificate. Its stable certificate requirement is intended
-to let macOS recognize successive betas as the same application for
-Accessibility. The 0.4.1 beta was the transition from the old ad-hoc identity;
-later releases continue using the stable certificate unless it changes. The
-certificate does not provide Apple developer attestation or notarization, so
-first launch still requires **Open Anyway** in System Settings → Privacy &
-Security. The transition release required one final Accessibility grant.
-
-Sparkle independently authenticates update archives with the EdDSA key built
-into the application. The self-signed code-signing certificate and its private
-key are not stored in the repository or CI. Certificate rotation, loss,
-compromise, or expiry breaks the stable application identity and requires a
-warning and focused release tests.
-
-The unsigned `CODE_SIGNING_ALLOWED=NO` builds produced by CI and by the release
-script's internal build step are validation builds only and are never
-distributed. The distributed signature is applied solely by
-`Tools/release-beta.sh`; see [docs/RELEASING.md](docs/RELEASING.md).
-
-Release signing credentials and their recovery details stay outside this
-repository and CI. Publishing requires an authorized release environment and is
-never automatic.
-
-Release builds contain only arm64 code for BetterTile and require macOS 26.0
-or later. Sparkle's appcast hardware requirement keeps Intel installations on
-the last compatible universal release. Sparkle's embedded helpers remain
-universal. The release executable is stripped before signing. Its matching
-dSYM stays beside the local release artifacts, outside the app and DMG; it
-contains full symbols and source paths and is not uploaded by the script.
-Dry runs use a disposable EdDSA key file and a temporary app public key,
-without reading the release signing key or changing tracked key material.
-
-## Change disclosure
-
-Pull requests must call out changes to networking, permissions, privileged
-components, dependencies, user-data handling, distribution, updates, private
-APIs, or architecture. Intentional architecture changes are permitted when
-their rationale, documentation, migration impact, and tests are included.
+To restore automatic use, run
+`defaults delete com.lmckarma.BetterTile disablePrivateAPIs`.
+
+## Network
+
+BetterTile contacts `github.com` over HTTPS for two reasons: to fetch the public
+update feed, and to download a release when the user chooses to. GitHub sees
+ordinary connection data such as the IP address. Automatic checks run every four
+hours and can be turned off in Settings. **Send Feedback…** opens a GitHub
+issue form in the browser with only the BetterTile version and build. Debug
+builds make no update requests. See
+[Network disclosure](docs/SECURITY_DISCLOSURES.md#network-disclosure).
+
+## Distribution and updates
+
+Public beta builds are signed with a maintainer-held, self-signed certificate.
+They are not notarized. First launch needs **Open Anyway** in System Settings →
+Privacy & Security.
+
+Sparkle checks every update archive against an EdDSA public key built into the
+app. That check does not depend on the code signature. The signing credentials
+and the EdDSA private key are not in the repository or in CI. CI builds are
+validation builds and are never distributed. See
+[Distribution](docs/SECURITY_DISCLOSURES.md#distribution) and
+[docs/RELEASING.md](docs/RELEASING.md).
+
+## Rules for changes
+
+These rules apply to every pull request. Contributors, maintainers, and
+automated reviewers use them.
+
+- Public Apple APIs are the default. Other implementation choices may change
+  when the user benefit justifies it. Changes are judged on security, privacy,
+  transparency, maintainability, and user benefit. There is no blanket ban on
+  a technology.
+- **Private API.** Open a design discussion in an issue or a draft pull request
+  first. The discussion must show that the API fits BetterTile's product goals
+  and that no public API gives the same user benefit. It must cover scope,
+  failure and compatibility risks, security and privacy impact, distribution,
+  maintenance cost, the test plan, and a safe fallback for when the API is
+  missing or changes. The maintainer must approve it before implementation.
+  Add a record to the disclosures before release. Test the fallback.
+- **Dependency.** Review need, maintenance, security history, license
+  compatibility, update strategy, and removal cost. Pin it and record it in
+  [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Sparkle is the only
+  runtime dependency. Adapted code needs clear provenance, a compatible
+  license, and attribution.
+- **Network.** A new network feature needs a documented user-facing purpose,
+  the least data, secure transport, and a record of its endpoints and payload
+  purpose in the disclosures before release. Optional diagnostics also need a
+  separate design decision, informed opt-in, documented retention, and an off
+  switch.
+- **Permission or privileged component.** See [Permissions](#permissions).
+- **Disclosure.** A pull request must call out any change to networking,
+  permissions, privileged components, dependencies, user-data handling,
+  distribution, updates, private APIs, or architecture. An intentional
+  architecture change is allowed when the pull request gives the reason, the
+  documentation, the migration impact, and the tests.

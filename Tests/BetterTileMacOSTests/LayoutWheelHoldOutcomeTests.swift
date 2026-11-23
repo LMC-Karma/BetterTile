@@ -200,8 +200,9 @@ func wheelHoldModelCancellationReasonsStayDistinct(reason: String) throws {
     #expect(outcomes.first?.contains("outcome=cancel reason=controllerReleased") == true)
 }
 
-/// SECURITY.md: activation diagnostics hold no event content. A selection
-/// or a pointer distance is derived from the pointer, so neither is logged.
+/// docs/SECURITY_DISCLOSURES.md: activation diagnostics hold no event
+/// content. A selection or a pointer distance is derived from the pointer, so
+/// neither is logged.
 @Test(.macOSTestApplication, arguments: [LayoutWheelStyle.custom, .grouped]) @MainActor
 func wheelDiagnosticsOmitTheSelectionAndPointerDistance(style: LayoutWheelStyle) {
     let pointer = MainActorBox(BTPoint(x: 500, y: 400))

@@ -173,7 +173,7 @@ handoff, material rendering, or cross-application stacking.
   creation event; neither event grants automatic placement. Pending and guarded
   late windows partly outside the work area keep their frames and show no
   fit-failure pill. Review the API’s causal-identity limit in
-  [SECURITY.md](../SECURITY.md).
+  [SECURITY_DISCLOSURES.md](SECURITY_DISCLOSURES.md#private-window-observations).
 - A running app has 10 seconds to produce an eligible new window; a cold launch
   has 30 seconds. Without an arrival, check the explicit fallback and retry.
   The separate 30-second late-arrival guard prevents overlapping same-app
