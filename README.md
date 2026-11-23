@@ -269,10 +269,14 @@ and the Layout Wheel. **Update checks and downloads contact GitHub**, which
 receives ordinary connection metadata. These requests send no window data,
 configuration, analytics, telemetry, crash reports, or system profile.
 **Send Feedback** opens a GitHub form with the app version and build in its
-suggested title; it submits no issue automatically.
+suggested title; it submits no issue automatically. **Copy Diagnostics** puts a
+plain-text report of versions, displays, layout modes, window counts, and
+settings on the pasteboard for a bug report. It contains no window titles, app
+names, or file paths, and BetterTile sends nothing.
 
-Read [Security and privacy](SECURITY.md) for the input scope, network disclosure,
-private observations, fallback behavior, and vulnerability reporting.
+Read [Security and privacy](SECURITY.md) for the policy and vulnerability
+reporting, and [Security disclosures](docs/SECURITY_DISCLOSURES.md) for the
+input scope, network disclosure, private observations, and fallback behavior.
 
 ## Known limits
 
@@ -369,7 +373,8 @@ submits nothing by itself. Read [Private by default](#private-by-default) and [S
 ### Can I turn off the private APIs?
 
 Yes. BetterTile uses a small set of reviewed, read-only private observations,
-each with a public fallback. They are described in [Security and privacy](SECURITY.md).
+each with a public fallback. They are described in
+[Private window observations](docs/SECURITY_DISCLOSURES.md#private-window-observations).
 To turn all of them off, quit BetterTile and run:
 
 ```sh
@@ -441,6 +446,7 @@ public issue.
 - [Release notes](docs/releases/0.6.2-beta.md) — what changed in the latest beta. [All releases](https://github.com/LMC-Karma/BetterTile/releases).
 - [Beta releases](docs/RELEASING.md) — version, validate, sign, and publish an update.
 - [Security and privacy](SECURITY.md) — permissions, networking, and reporting policy.
+- [Security disclosures](docs/SECURITY_DISCLOSURES.md) — per-feature privacy and security records.
 - [Third-party notices](THIRD_PARTY_NOTICES.md) — upstream code, attribution, and terms.
 - [Agent instructions](AGENTS.md) — build, test, and convention rules for coding agents.
 
