@@ -16,6 +16,17 @@ git() {
 }
 gh() {
     [[ "$1 $2" == 'release create' ]] || return 1
+    # The Download links use releases/latest/download/BetterTile.dmg, so every
+    # release must also publish the fixed-name copy and its checksum.
+    local stable_assets=0
+    for argument in "$@"; do
+        [[ "$argument" == "$work_dir/$stable_dmg_name" || "$argument" == "$work_dir/$stable_checksum_name" ]] \
+            && stable_assets=$((stable_assets + 1))
+    done
+    [[ "$stable_assets" == 2 ]] || {
+        echo "Publication must upload BetterTile.dmg and BetterTile.dmg.sha256." >&2
+        return 1
+    }
     while [[ $# -gt 0 ]]; do
         if [[ "$1" == --target ]]; then
             [[ "${2:-}" == "$validated_commit" ]] || {
@@ -39,6 +50,8 @@ tag=v0.0.0-beta
 work_dir=/unused
 dmg_name=fixture.dmg
 checksum_name=fixture.sha256
+stable_dmg_name=BetterTile.dmg
+stable_checksum_name=BetterTile.dmg.sha256
 appcast_path=/unused/appcast.xml
 repo=fixture/repository
 version=0.0.0

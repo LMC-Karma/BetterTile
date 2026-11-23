@@ -154,6 +154,8 @@ Only the finished, inspectable artifacts are copied back into
 
 - `BetterTile-<version>-beta.dmg`
 - `BetterTile-<version>-beta.dmg.sha256`
+- `BetterTile.dmg` and `BetterTile.dmg.sha256` (a byte-identical copy of the
+  DMG under a fixed name, and its checksum)
 - `BetterTile-<version>-beta.md` (the release notes as published)
 - `appcast.xml`
 - `BetterTile.app.dSYM` (local symbols; not a published asset)
@@ -246,6 +248,14 @@ It publishes the DMG, SHA-256 checksum, notes, and `appcast.xml` as a public
 GitHub release marked Latest. Sparkle reads the appcast through GitHub's stable
 Latest-release asset URL:
 `https://github.com/LMC-Karma/BetterTile/releases/latest/download/appcast.xml`.
+
+The release also carries `BetterTile.dmg` and `BetterTile.dmg.sha256`, a
+byte-identical copy of the versioned DMG under a fixed name. The website and
+README Download links use
+`https://github.com/LMC-Karma/BetterTile/releases/latest/download/BetterTile.dmg`,
+which GitHub resolves to the newest release, so they need no update after a
+release. The appcast still points Sparkle at the versioned DMG. The script
+confirms that both DMG URLs answer after publication.
 
 After publication, confirm the release assets and appcast are public, then
 inspect the appcast version, asset URL, and EdDSA signature. The maintainer can
