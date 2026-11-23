@@ -1,14 +1,16 @@
-import release from './release.json' with { type: 'json' };
-export { release };
 // Product facts and public copy. Build again after editing.
+// The one place that decides what every Download button opens. It is the latest-release page, so the site never
+// shows an old disk image or version. After a release uploads the fixed-name asset BetterTile.dmg, change it to
+// 'https://github.com/LMC-Karma/BetterTile/releases/latest/download/BetterTile.dmg' for a direct download.
+export const DOWNLOAD_URL = 'https://github.com/LMC-Karma/BetterTile/releases/latest';
 export const brand = {
   name: 'BetterTile', headline: ['Your windows.', 'Working together.'],
   get tagline() { return this.headline.join(' '); },
   description: 'A free, native macOS window manager. Snap windows into place, resize neighbours together, let Adaptive tiling make room as your work grows, and bring a desktop back with Saved Layouts.',
-  requirement: 'Apple silicon Mac, macOS 26 or later', version: release.latest.version, checked: '3 October 2026',
+  requirement: 'Apple silicon Mac, macOS 26 or later', checked: '22 November 2026',
   site: 'https://lmc-karma.github.io/BetterTile/',
   links: {
-    download: release.latest.dmg,
+    download: DOWNLOAD_URL,
     latest: 'https://github.com/LMC-Karma/BetterTile/releases/latest',
     github: 'https://github.com/LMC-Karma/BetterTile',
     docs: 'https://github.com/LMC-Karma/BetterTile/blob/main/README.md',
@@ -16,7 +18,7 @@ export const brand = {
     security: 'https://github.com/LMC-Karma/BetterTile/blob/main/SECURITY.md',
     releases: 'https://github.com/LMC-Karma/BetterTile/releases',
     issues: 'https://github.com/LMC-Karma/BetterTile/issues',
-    limitations: 'https://github.com/LMC-Karma/BetterTile/blob/main/docs/releases/0.6.0-beta.md',
+    limitations: 'https://github.com/LMC-Karma/BetterTile/releases/latest',
     license: 'https://github.com/LMC-Karma/BetterTile/blob/main/LICENSE',
   },
   assets: { symbol: 'assets/identity/symbol-reversed.svg', icon: 'assets/identity/app-icon-native-dark-128.png', iconLight: 'assets/identity/app-icon-native-light-128.png', iconLarge: 'assets/identity/app-icon-native-dark-256.png', iconLightLarge: 'assets/identity/app-icon-native-light-256.png', video: 'assets/media/overview.mp4', poster: 'assets/media/overview.jpg' },
@@ -32,7 +34,7 @@ export const copy = {
   tabbed: { title: ['More within reach.', 'Less on the surface.'], body: 'Tabbed groups windows in resizable panes. Select a tab to bring its window forward. Drag tabs between panes, or drag a floating window into a pane as a tab.', detail: 'Turn off Stage Manager for Tabbed. Pane assignments last for the current app session.', extra: { title: 'Layout Gallery', body: 'Open the Layout Gallery from a tab bar’s … menu. It shows a picture of each layout. The + button in a pane opens an app straight into it, and tab bars can hide until you point at them.' } },
   wheel: { title: ['Your next move.', 'Within reach.'], detail: 'In a One Level wheel, the bottom sector is Repair Layout. Escape or the center cancels. Optional middle click reserves that button system-wide while enabled.', extra: { title: 'Grouped style', body: 'Choose Grouped for groups such as Size, Thirds, Displays, Mode and Choose Layout, each with its own fan of commands. Or keep Custom, with one or two levels. The wheel can change a desktop’s mode, choose a Tabbed layout and apply Saved Layouts.' } },
   keyboard: { title: ['Keep your hands', 'on the keys.'], body: 'Place windows with global shortcuts. Undo a placement when you want to try another arrangement.', detail: 'Give each command its keys on the Shortcuts page in Settings, with duplicate checks.' },
-  more: { title: ['Also new', 'in 0.6.'], body: 'Two more changes in this beta. The release notes list the rest.', items: [
+  more: { title: ['Also new', 'in the beta.'], body: 'Two more changes in the beta. The release notes list the rest.', items: [
     { media: 'repair-layout', title: 'Repair Layout', body: 'Rebuild a desktop’s layout from its visible windows. Adaptive panes return to equal shares.' },
     { media: 'multi-display', title: 'Multiple displays', body: 'Next Display and Previous Display make room on the destination and close the gap on the source.' },
   ] },
@@ -40,7 +42,7 @@ export const copy = {
 };
 
 export const faq = [
-  ['Which Macs can run it?', 'BetterTile 0.6 requires an Apple silicon Mac with macOS 26 or later. Intel Macs stay on 0.5.2 and are not offered this update. Accessibility is the only macOS permission BetterTile requests. Check the latest release notes before installing a new version.'],
+  ['Which Macs can run it?', 'BetterTile requires an Apple silicon Mac with macOS 26 or later. Intel Macs stay on 0.5.2 and are not offered this update. Accessibility is the only macOS permission BetterTile requests. Check the latest release notes before installing a new version.'],
   ['Why does it need Accessibility?', 'Accessibility lets BetterTile read window frames, then move and resize eligible windows. The app explains the permission before requesting it.'],
   ['Is it really free?', 'Yes. BetterTile is free forever and open source under GPL v3 or later. There is no paid tier, trial expiry, subscription, advertising, behavioral tracking, or sale of user data.'],
   ['Does the app use the internet?', 'Window and configuration data stay on your Mac. Update checks and downloads contact GitHub, which receives ordinary connection metadata. Automatic update checks run every four hours by default and can be disabled. Send Feedback opens a GitHub form with the app version and build in its suggested title; it submits no issue automatically.'],
@@ -50,26 +52,26 @@ export const faq = [
 ];
 
 export const comparison = [
-  { name: brand.name, icon: 'assets/identity/app-icon-native-dark-128.png', price: 'Free · Public beta', fit: 'Direct shared-boundary control, Adaptive tiling, Tabbed panes and Saved Layouts.', resize: 'Drag the seam. Choose Resize Preview or Live Resize.', ownership: 'Free · GPL v3+ · macOS 26+ beta on Apple silicon', source: brand.links.docs, extra: brand.links.security, extraLabel: 'Beta & privacy details' },
-  { name: 'Rectangle Pro', icon: 'assets/competitors/rectangle-pro-128.png', iconFill: true, price: 'US$9.99 · 10-day trial', fit: 'Custom placement commands and saved workspaces, including automatic layout triggers.', resize: 'Adjacent windows adjust on release after an edge drag.', ownership: 'US$9.99 displayed · 10-day trial', source: 'https://rectangleapp.com/pro/docs/general/', extra: 'https://rectangleapp.com/pro/docs/layouts/', extraLabel: 'Saved layouts' },
-  { name: 'Moom', icon: 'assets/competitors/moom-128.png', price: '$15 · Perpetual license', fit: 'Reusable arrangements and a configurable window-control palette.', resize: 'Saved multi-window arrangements. A shared seam was not verified.', ownership: '$15 displayed · perpetual license, ≥1 year updates', source: 'https://manytricks.com/moom/help/customactions.html', extra: 'https://manytricks.com/moom/', extraLabel: 'Product & price' },
-  { name: 'AeroSpace', icon: 'assets/competitors/aerospace-128.png', price: 'Free', fit: 'Keyboard and CLI tiling with plain-text configuration and virtual workspaces.', resize: 'Tree resize and balance commands. Pointer seam behavior was not tested.', ownership: 'Free · MIT · configuration-oriented', source: 'https://nikitabobko.github.io/AeroSpace/commands#resize', extra: 'https://github.com/nikitabobko/AeroSpace', extraLabel: 'Source & workflow' },
+  { name: brand.name, note: 'Free · Open source · Public beta', fit: 'Direct shared-boundary control, Adaptive tiling, Tabbed panes and Saved Layouts.', source: brand.links.docs, extra: brand.links.security, extraLabel: 'Beta & privacy details' },
+  { name: 'Rectangle Pro', note: 'Free trial, then purchase', fit: 'Custom placement commands and saved workspaces, including automatic layout triggers.', source: 'https://rectangleapp.com/pro/docs/general/', extra: 'https://rectangleapp.com/pro/docs/layouts/', extraLabel: 'Saved layouts' },
+  { name: 'Moom', note: 'Free trial, then purchase', fit: 'Reusable arrangements and a configurable window-control palette.', source: 'https://manytricks.com/moom/help/customactions.html', extra: 'https://manytricks.com/moom/', extraLabel: 'Product page' },
+  { name: 'AeroSpace', note: 'Open source · MIT', fit: 'Keyboard and CLI tiling with plain-text configuration and virtual workspaces.', source: 'https://nikitabobko.github.io/AeroSpace/commands#resize', extra: 'https://github.com/nikitabobko/AeroSpace', extraLabel: 'Source & workflow' },
 ];
 
 // Checklist rows, one value per product in comparison order. true = documented by the developer.
-// A string adds how it works. null = not verified in the developer's sources. 'no' = BetterTile does not offer it yet.
-// Sources: research/category.md, checked 3 October 2026. BetterTile rows follow the 0.6.0 release notes.
-// Do not turn a missing feature page into a cross.
+// A string adds how it works. null = not listed on the pages checked (not a claim that the feature is missing).
+// 'no' = BetterTile does not offer it yet. Competitor cells come from each developer's own pages, read on the date
+// in brand.checked. BetterTile rows follow the current release notes. Do not turn a missing feature page into a cross.
+// Prices are not published here: they change, and each vendor's page is the source.
 export const checklist = [
   ['Resize neighbours together', 'Move one edge and the next window follows.', ['Drag the shared edge', 'After release', null, 'Resize commands']],
   ['Tile new windows automatically', 'Room is made as windows open.', ['Adaptive tiling', 'Layout triggers', null, 'Tree tiling']],
-  ['Drag to snap', 'Edges, corners and custom zones.', [true, true, 'Drag zones', null]],
+  ['Drag to snap', 'Edges, corners and custom zones.', [true, true, 'Snap zones', null]],
   ['Keyboard shortcuts', 'Place windows without the pointer.', [true, true, true, 'Keyboard and CLI']],
-  ['Pointer menu', 'Choose a placement where the pointer is.', ['Layout Wheel', null, 'Pop-up palette', null]],
-  ['Tabbed panes', 'Several windows share one pane.', [true, null, null, null]],
+  ['Pointer menu', 'Choose a placement where the pointer is.', ['Layout Wheel', 'Snap panel', 'Pop-up palette', null]],
   ['Saved layouts', 'Store an arrangement and apply it later.', ['Saved Layouts', true, 'Saved arrangements', null]],
   ['Open source', 'Read and build the code yourself.', ['GPL v3 or later', null, null, 'MIT']],
-  ['Requires', '', ['macOS 26 · Apple silicon', 'macOS 13.5', 'macOS 10.13', null]],
+  ['Requires', '', ['macOS 26 · Apple silicon', 'macOS 13.5', 'macOS 10.13', 'macOS 13']],
 ];
 
 // 1080p60 rendered product demos. The MP4s contain no audio track. The seven original file names stay stable
@@ -90,5 +92,6 @@ export const media = {
   'multi-display': video('multi-display', 'Previous Display sends a window to the other display. The destination makes room and the source closes the gap.', 'Multiple displays'),
 };
 
-// 800 × 450, 20 fps GIF exports for the app README. Published at assets/media/gifs/bettertile-<stem>.gif.
-export const gifs = ['snap', 'resize', 'adaptive', 'tabbed', 'layout-gallery', 'wheel', 'wheel-grouped', 'saved-layouts', 'repair-layout', 'multi-display', 'keyboard'];
+// 800 × 450, 20 fps GIF exports. The app README on main links these six at assets/media/gifs/bettertile-<stem>.gif,
+// so they stay published. The website page itself does not use them.
+export const gifs = ['resize', 'adaptive', 'tabbed', 'layout-gallery', 'saved-layouts', 'wheel'];
