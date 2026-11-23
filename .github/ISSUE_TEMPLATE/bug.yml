@@ -29,6 +29,47 @@ body:
     validations:
       required: true
   - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: >-
+        Optional. In BetterTile 0.6.3 or later, choose Copy Diagnostics in the
+        BetterTile menu, then paste the result here. The report has versions,
+        display sizes, layout modes, window counts, and a few settings. It has
+        no window titles, app names, or file paths. Read it before you submit.
+      render: text
+    validations:
+      required: false
+  - type: dropdown
+    id: layout-mode
+    attributes:
+      label: Layout mode
+      description: The mode of the desktop where the problem happened. The Layout Wheel and the menu bar panel show it.
+      options:
+        - Manual
+        - Adaptive
+        - Tabbed
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: apps
+    attributes:
+      label: Apps involved
+      description: Optional. Names of the apps whose windows were affected. App names help reproduce a problem. Leave this empty if you prefer not to share them.
+      placeholder: Safari, Terminal
+  - type: dropdown
+    id: accessibility
+    attributes:
+      label: Accessibility permission
+      description: Check System Settings → Privacy & Security → Accessibility.
+      options:
+        - BetterTile is turned on in Accessibility
+        - BetterTile is not turned on in Accessibility
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
     id: displays
     attributes:
       label: Display and Stage Manager setup
@@ -38,3 +79,11 @@ body:
       label: Reproduction steps
     validations:
       required: true
+  - type: textarea
+    id: crash
+    attributes:
+      label: Crash report
+      description: >-
+        Optional. If BetterTile crashed, macOS saved a report named
+        BetterTile-*.ips in ~/Library/Logs/DiagnosticReports. Paste its text here
+        or drag the file into this box. Remove anything you do not want to share first.
