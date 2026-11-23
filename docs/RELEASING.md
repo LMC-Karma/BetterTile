@@ -257,6 +257,11 @@ which GitHub resolves to the newest release, so they need no update after a
 release. The appcast still points Sparkle at the versioned DMG. The script
 confirms that both DMG URLs answer after publication.
 
+One time only: releases up to 0.6.2 have no `BetterTile.dmg`, so the website
+links to the latest-release page for now. After the first release that
+carries `BetterTile.dmg`, change the website's single download-link constant
+on `gh-pages` to the direct file URL above.
+
 After publication, confirm the release assets and appcast are public, then
 inspect the appcast version, asset URL, and EdDSA signature. The maintainer can
 check the update on an installed copy. Require a controlled update from an
