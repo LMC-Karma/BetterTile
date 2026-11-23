@@ -118,7 +118,10 @@ BetterTile contacts `github.com` over HTTPS for two reasons: to fetch the public
 update feed, and to download a release when the user chooses to. GitHub sees
 ordinary connection data such as the IP address. Automatic checks run every four
 hours and can be turned off in Settings. **Send Feedback…** opens a GitHub
-issue form in the browser with only the BetterTile version and build. Debug
+issue form in the browser with only the BetterTile version and build.
+**Copy Diagnostics** puts a privacy-safe report on the pasteboard only when
+the user chooses it, and sends nothing; see
+[Copy Diagnostics](docs/SECURITY_DISCLOSURES.md#copy-diagnostics). Debug
 builds make no update requests. See
 [Network disclosure](docs/SECURITY_DISCLOSURES.md#network-disclosure).
 
