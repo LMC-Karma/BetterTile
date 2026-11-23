@@ -505,7 +505,7 @@ struct StepperRow: View {
         self.fractionDigits = fractionDigits
     }
 
-    static func clamped(_ value: Double, to range: ClosedRange<Double>) -> Double {
+    nonisolated static func clamped(_ value: Double, to range: ClosedRange<Double>) -> Double {
         guard value.isFinite else { return range.lowerBound }
         return min(max(value, range.lowerBound), range.upperBound)
     }

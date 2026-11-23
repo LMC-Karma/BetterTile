@@ -1257,7 +1257,7 @@ struct SavedLayoutSettings: View {
         if case let .updateFromFile(url) = action, let reason = updateFileRefusal(url) { editor.reportFailure(reason); return }
         resetApplyGroup()
         switch action {
-        case let .new(setup): creation.begin(setup, editor: editor); editing = true
+        case let .new(setup): if creation.begin(setup, editor: editor) { editing = true }
         case .capture:
             let before = editor.document
             saveCurrentLayout()

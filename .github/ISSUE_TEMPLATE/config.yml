@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security problem
+    url: https://github.com/LMC-Karma/BetterTile/security/advisories/new
+    about: Report a vulnerability privately. Do not open a public issue for a security problem. Read SECURITY.md first.
+  - name: Read the FAQ
+    url: https://github.com/LMC-Karma/BetterTile#faq
+    about: First launch, Accessibility permission, checking a download, uninstalling, and where settings are stored.

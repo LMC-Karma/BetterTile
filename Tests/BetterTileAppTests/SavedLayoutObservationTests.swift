@@ -315,7 +315,7 @@ extension SavedLayoutObservationTests {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         var watcher: SavedLayoutFileWatcher? = SavedLayoutFileWatcher()
-        weak var released = watcher
+        weak let released = watcher
         var actions: SavedLayoutActions? = SavedLayoutActions(
             files: .init(directory: root.appendingPathComponent("Saved Layouts")), watcher: watcher!)
         actions?.start()

@@ -178,7 +178,7 @@ import Testing
             let label = labels.first { !$0.isEmpty } ?? ""
             let role = attribute(object, #selector(NSAccessibilityProtocol.accessibilityRole)) as? String ?? ""
             let children = attribute(object, #selector(NSAccessibilityProtocol.accessibilityChildren)) as? [Any]
-                ?? object.accessibilityAttributeValue(.children) as? [Any] ?? []
+                ?? legacyAccessibilityChildren(of: object) as? [Any] ?? []
             let contents = attribute(object, #selector(NSAccessibilityProtocol.accessibilityContents)) as? [Any] ?? []
             let navigation = attribute(object, #selector(NSAccessibilityProtocol.accessibilityChildrenInNavigationOrder)) as? [Any] ?? []
             return [(object, label, role)] + (children + contents + navigation).flatMap(walk)

@@ -1004,17 +1004,20 @@ public final class WindowCoordinator {
     /// the user-visible arrangement, so re-minimizing undoes a mistake; here
     /// each restore is immediately user-visible, and undoing it to satisfy
     /// atomicity would trade a small inconsistency for a larger one.
-    public func restoreFocusDropPeers(_ windowIDs: Set<WindowID>) -> WindowMutationOutcome {
-        var failureReason: String?
+    ///
+    /// - Returns: Each peer that macOS refused to restore, with the reason.
+    ///   An empty result means every request was accepted. An accepted
+    ///   request does not mean that the window is already back.
+    public func restoreFocusDropPeers(_ windowIDs: Set<WindowID>) -> [WindowID: String] {
+        var refused: [WindowID: String] = [:]
         for windowID in windowIDs.sorted() {
             do {
                 try system.setMinimized(false, for: windowID)
             } catch {
-                failureReason = error.localizedDescription
+                refused[windowID] = error.localizedDescription
             }
         }
-        if let failureReason { return .failed(reason: failureReason) }
-        return .applied
+        return refused
     }
 
     private func apply(

@@ -56,6 +56,11 @@ repo="LMC-Karma/BetterTile"
 tag="v${version}-beta"
 dmg_name="BetterTile-${version}-beta.dmg"
 checksum_name="${dmg_name}.sha256"
+# The website and README link to releases/latest/download/BetterTile.dmg.
+# GitHub resolves that URL to the newest release, so the Download button
+# never names an old version. Sparkle keeps the versioned asset.
+stable_dmg_name="BetterTile.dmg"
+stable_checksum_name="${stable_dmg_name}.sha256"
 notes_name="${dmg_name%.dmg}.md"
 artifact_dir="$repo_root/.build/beta-release/$tag"
 feed_url="https://github.com/$repo/releases/latest/download/appcast.xml"
@@ -354,6 +359,9 @@ rmdir "$mount_dir"
 (
     cd "$work_dir"
     shasum -a 256 "$dmg_name" > "$checksum_name"
+    cp "$dmg_name" "$stable_dmg_name"
+    shasum -a 256 "$stable_dmg_name" > "$stable_checksum_name"
+    cmp -s "$dmg_name" "$stable_dmg_name"
 )
 cp "$work_dir/$dmg_name" "$archive_dir/$dmg_name"
 cp "$notes_path" "$archive_dir/$notes_name"
@@ -370,7 +378,8 @@ validate_arm64_appcast "$appcast_path" "$project_build"
 # Retain only the finished, inspectable artifacts. DerivedData and the disk
 # image staging tree stay in the temporary directory and are discarded.
 mkdir -p "$artifact_dir"
-cp "$work_dir/$dmg_name" "$work_dir/$checksum_name" "$appcast_path" "$artifact_dir/"
+cp "$work_dir/$dmg_name" "$work_dir/$checksum_name" "$work_dir/$stable_dmg_name" \
+    "$work_dir/$stable_checksum_name" "$appcast_path" "$artifact_dir/"
 cp "$notes_path" "$artifact_dir/$notes_name"
 ditto "$dsym_path" "$artifact_dir/BetterTile.app.dSYM"
 
@@ -380,8 +389,8 @@ if [[ "$dry_run" == true ]]; then
     exit 0
 fi
 
-gh release create "$tag" "$work_dir/$dmg_name" "$work_dir/$checksum_name" "$appcast_path" \
-    --repo "$repo" --target "$release_commit" --latest \
+gh release create "$tag" "$work_dir/$dmg_name" "$work_dir/$checksum_name" "$work_dir/$stable_dmg_name" \
+    "$work_dir/$stable_checksum_name" "$appcast_path" --repo "$repo" --target "$release_commit" --latest \
     --title "BetterTile $version Beta" --notes-file "$notes_path"
 
 asset_url="$release_url_prefix$dmg_name"
@@ -389,6 +398,8 @@ asset_url="$release_url_prefix$dmg_name"
 # finished propagating answers 404, which would abort the run after the release
 # is already public, so retry on all errors.
 curl --fail --location --head --retry 12 --retry-delay 5 --retry-all-errors "$asset_url" >/dev/null
+curl --fail --location --head --retry 12 --retry-delay 5 --retry-all-errors \
+    "$release_url_prefix$stable_dmg_name" >/dev/null
 
 # The release and its Latest redirect can take a moment to propagate. Poll the
 # public feed until it serves the build that was just published.

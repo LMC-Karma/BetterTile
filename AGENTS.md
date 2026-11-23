@@ -6,8 +6,13 @@ contributors should read [CONTRIBUTING.md](CONTRIBUTING.md).
 ## Project
 
 BetterTile is a native macOS window manager. It provides keyboard and drag
-snapping, linked resizing, and Adaptive tiling. It uses Swift 6.3,
-SwiftUI, AppKit, and the public Accessibility API.
+snapping, linked resizing, and Adaptive tiling. It uses Swift, SwiftUI,
+AppKit, and the public Accessibility API.
+
+Toolchain: Xcode 26.6 or later, which includes the Swift 6.3 compiler (the
+minimum). `Package.swift` uses swift-tools-version 6.2. Both the package and
+the Xcode project build in Swift 6 language mode. See
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#prerequisites).
 
 BetterTile is free. It has no advertising, behavioral tracking, or sale of user
 data.
@@ -20,7 +25,8 @@ data.
   coordinates, window mutations, application integrations, or updates.
 - Read [SECURITY.md](SECURITY.md) before changing networking, permissions,
   dependencies, user data, privileged components, private APIs, distribution,
-  or updates.
+  or updates. Record the change in
+  [docs/SECURITY_DISCLOSURES.md](docs/SECURITY_DISCLOSURES.md).
 - Read [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) before setting up a machine,
   changing signing, or diagnosing the local build environment.
 - Read [docs/BENTO_TESTING.md](docs/BENTO_TESTING.md) before changing Bento event
@@ -84,11 +90,12 @@ injection.
 
 Get maintainer approval through a written design discussion before implementing
 a private API. Follow the review, fallback, test, and disclosure rules in
-`SECURITY.md`.
+`SECURITY.md`. Record the disclosure in `docs/SECURITY_DISCLOSURES.md`.
 
 Networking, dependencies, permissions, privileged components, user-data
 handling, distribution, updates, and intentional architecture changes also
-need the benefit, review, tests, and disclosure required by `SECURITY.md`. New
+need the benefit, review, tests, and disclosure required by `SECURITY.md`. Write
+the disclosure in `docs/SECURITY_DISCLOSURES.md`. New
 permissions need an in-product explanation before the system prompt. Record
 compatible licensing, provenance, and attribution for adapted code.
 

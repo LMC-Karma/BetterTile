@@ -29,7 +29,6 @@ struct ApplicationRecoveryClassificationTests {
         system.eventHandler?(WindowSystemEvent(kind: .resized, windowID: held, processIdentifier: 43))
         await system.joinWindowEvent(on: model)
         try #require(retained(model) == [held: 43])
-        let before = system.frameWriteCounts
         if reject { system.failedFrameWriteNumbers[held] = [1] }
         system.unresponsiveProcessIDs.removeAll()
         system.applicationHoldsUntil[43] = system.uptime - 1

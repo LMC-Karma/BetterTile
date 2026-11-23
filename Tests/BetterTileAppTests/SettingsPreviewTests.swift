@@ -143,7 +143,7 @@ import Testing
                       attribute(object, #selector(NSAccessibilityProtocol.accessibilityValue)) as? String].compactMap { $0 }
         // AppKit's outline rows still expose their children through this public compatibility API.
         let children = attribute(object, #selector(NSAccessibilityProtocol.accessibilityChildren)) as? [Any]
-            ?? object.accessibilityAttributeValue(.children) as? [Any] ?? []
+            ?? legacyAccessibilityChildren(of: object) as? [Any] ?? []
         for child in children { result += text(in: child) }
         return result
     }

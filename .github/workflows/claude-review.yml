@@ -34,14 +34,13 @@ jobs:
       pull-requests: write
       id-token: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - id: review
         uses: anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b # v1
         with:
-          # Uses a Claude subscription (Pro/Max) via OAuth — no API credits.
-          # Generate the token with `claude setup-token` and store it as a repo secret.
+          # A maintainer-held repository secret; contributors need no token.
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
             Review pull request #${{ github.event.pull_request.number }} in
@@ -73,11 +72,13 @@ jobs:
             - BetterTile accepts no SIP workaround or code injection.
             - Private Apple APIs require a written design discussion, maintainer
               approval, product fit, compatibility tests, safe fallback, and the
-              disclosure required by SECURITY.md. Public APIs remain the default.
+              disclosure required by SECURITY.md and recorded in
+              docs/SECURITY_DISCLOSURES.md. Public APIs remain the default.
             - The app delegate owns SPUStandardUpdaterController and implements
               SPUUpdaterDelegate. BetterTileCore has no updater API.
 
-            SECURITY.md is the canonical policy for networking, privacy,
+            SECURITY.md and docs/SECURITY_DISCLOSURES.md are the canonical
+            policy and disclosure record for networking, privacy,
             permissions, privileged components, dependencies, distribution,
             updates, licensing, and user-data handling. For a finding in one of
             these areas, cite the relevant rule and verify the required benefit,
@@ -104,7 +105,7 @@ jobs:
     # The author_association gate is essential on a public repo: these events run
     # in the base-repo context with access to CLAUDE_CODE_OAUTH_TOKEN regardless
     # of who commented, so without it any GitHub user could burn the Claude
-    # subscription quota (or attempt prompt injection) by writing "@claude".
+    # review quota (or attempt prompt injection) by writing "@claude".
     # Only the repo owner, org members, and invited collaborators may trigger it.
     if: >
       (github.event_name == 'issue_comment' &&
@@ -123,7 +124,7 @@ jobs:
       issues: write
       id-token: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - uses: anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b # v1

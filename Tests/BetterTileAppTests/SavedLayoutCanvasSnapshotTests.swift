@@ -16,7 +16,7 @@ import Testing
     }
     private static let apps = ["com.apple.dt.Xcode", "com.apple.Safari", "com.apple.Terminal", "com.apple.mail", "com.apple.Notes"]
 
-    private struct Host {
+    @MainActor private struct Host {
         var view: NSHostingView<AnyView>
         var window: NSWindow
         var editor: SavedLayoutEditor

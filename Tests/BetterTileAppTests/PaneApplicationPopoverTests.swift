@@ -15,7 +15,7 @@ import Testing
         let selector = #selector(NSAccessibilityProtocol.accessibilityChildren)
         let children = (object.responds(to: selector)
             ? object.perform(selector)?.takeUnretainedValue() as? [NSObject] : nil)
-            ?? object.accessibilityAttributeValue(.children) as? [NSObject] ?? []
+            ?? legacyAccessibilityChildren(of: object) as? [NSObject] ?? []
         return [object] + (children + ((object as? NSView)?.subviews ?? [])).flatMap(visit)
     }
     return visit(root)

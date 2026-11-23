@@ -4,6 +4,41 @@ Product text uses **Adaptive** instead of Bento, **Manual** instead of Native, *
 
 BetterTile separates deterministic placement policy from macOS side effects.
 
+## About this document
+
+This document describes how BetterTile is built: its layers, coordinate model,
+window-mutation rules, and the design of each major feature. Read it before you
+change a layer boundary, a coordinate conversion, a window mutation, an
+application integration, or the update path. The rules in
+[AGENTS.md](../AGENTS.md) summarize the layer limits. Product behavior and terms
+are in [CONTEXT.md](../CONTEXT.md).
+
+**Terminology.** In code and in this document, **Bento** is the code name for
+the product's **Adaptive** mode. Type names, identifiers, and the `"bento"`
+configuration value keep the old name. Product text, such as Settings and
+release notes, says Adaptive. [CONTEXT.md](../CONTEXT.md) records this rule.
+
+Sections:
+
+- [Layers](#layers): The three layers and what each owns.
+- [Application-level integrations](#application-level-integrations): How the app delegate owns Sparkle and other application-level work.
+- [Time source](#time-source): The clock that Core and the app use, and how tests control it.
+- [Coordinate model](#coordinate-model): Logical top-left points in Core, and conversion at the macOS boundary.
+- [Snap Zones](#snap-zones): Zone selection and activation areas for drag snapping.
+- [Window drag drops](#window-drag-drops): How one window drag becomes one drop decision.
+- [Space boundary](#space-boundary): Which windows BetterTile manages and how it follows Spaces and displays.
+- [Popup and fixed-size windows](#popup-and-fixed-size-windows): Windows that float and never join a layout.
+- [Event ordering](#event-ordering): How display, sleep, window, and input events are ordered and settled.
+- [Minimum sizes](#minimum-sizes): How BetterTile learns and applies window minimum sizes.
+- [Unresponsive applications](#unresponsive-applications): How hung applications are kept from blocking window work.
+- [Bento](#bento): The Adaptive layout tree, its reducers, and its resize and placement rules.
+- [Tabbed panels on native Spaces](#tabbed-panels-on-native-spaces): Tabbed panes and their overlays on native Spaces.
+- [Overlay appearance](#overlay-appearance): Overlay panels, including the pane application picker.
+- [Linked resizing](#linked-resizing): Shared boundaries and linked resize behavior.
+- [Configuration](#configuration): The configuration file, schema, and migrations.
+- [Saved Layouts](#saved-layouts): The Saved Layout document, its validation, and how a layout is applied.
+- [Security](#security): The security rules that affect the architecture.
+
 ## Layers
 
 1. **BetterTileCore** owns geometry, actions, Bento placement, linked resizing, frame history, shortcut/configuration models, and migrations. It has no AppKit or Accessibility dependency. It contains no updater API and must not gain one: updating is a distribution concern, not placement policy.
@@ -1408,6 +1443,49 @@ wait. After a committed or stale restore, an ordinary topology pass measures
 arrivals before their first placement without waiting for another notification.
 Rejected or degraded restores leave them unprobed and unmoved until Repair.
 
+A peer that does not come back stays known to the model, per desktop session:
+macOS refused its restore request, the peer was still away when the wait ended,
+or a newer action cancelled the wait first. The Restore command names the
+application in a pill with a fixed title, so an application name never selects
+the title. Restore reports only definite failures. A refusal shows "Use
+Repair Layout" at once. A peer whose application is not responding shows the
+same title, at once or at the deadline. A peer that is still minimized at the
+deadline is not reported, because an application can take longer to show its
+window; it stays recorded, and a window that arrives later joins the layout as
+usual. A peer that is not minimized, for example one on another display, is
+not reported either. Repair, including a mode command that chooses
+Adaptive, asks macOS to restore each recorded peer again, and the peers that
+Focus mode still covers. It waits for them with the same bounded wait
+before it lays out the display. A peer still read as minimized after that
+turns the result into "Layout partly applied", which names its application.
+A peer leaves the record when it is seen on screen, sends a restored or
+destroyed notification, or its application quits. The record ends when the
+desktop leaves Adaptive or a Saved Layout apply resets Focus mode state.
+
+A stopped or hung application cannot answer Accessibility reads, so its peer
+cannot be read back. Such a peer counts as away only with direct evidence
+that its application stopped answering, and only while WindowServer does not
+show the window on screen. The WindowServer read asks no application. Before
+a read, only the adapter's 2-second call hold after a timed-out call skips
+it. After a failed read, the evidence is that hold, or the last complete
+sweep leaving the application unread during its inventory backoff. The hold
+alone can expire while the application is still stopped, because a sweep in
+backoff does not message it. The sweep's unread set alone can be stale: an
+application that becomes active again releases the call hold at once, but
+the set changes only at the next complete sweep, so a recovered application
+is read before it is judged. The pill then says that the application is not
+responding and that Repair can bring the window back when it responds. A
+held application is not read again during the same check, so a hung
+application costs at most one timeout per check. A peer that the desktop
+observation places only on Spaces that are not current, including its own
+full-screen Space, leaves the record without a report, and Repair does not
+restore it: the user moved it, and Repair cannot bring it back to this
+desktop. Any other unreadable peer is not reported, even when macOS refused
+its restore: it may have closed, or, without a desktop observation, it may be
+on another Space. Pills name the application from the process and bundle
+recorded when Focus mode began. The bundle must still match, because a
+process number can be reused.
+
 Keyboard and captured Layout Wheel partitions use the same peer-return wait.
 When all peers are visible, the partition runs synchronously. Otherwise it
 keeps the original target and replans after the peers return or the 1.5-second
@@ -1880,7 +1958,7 @@ Empty panes and populated tab bars expose **Add App**. The overlay emits an
 owner-bound callback to the app model. `PaneApplicationPicker` wraps the shared
 `ApplicationPicker`; it adds no catalog or persisted setting. The shared
 picker lists Recent, Running, and All Apps, and records each choice in the
-local Recent list described in [SECURITY.md](../SECURITY.md). A nonactivating
+local Recent list described in [SECURITY_DISCLOSURES.md](SECURITY_DISCLOSURES.md#permissions-and-dependencies). A nonactivating
 bar's **Show Tab Bar** keyboard path also accepts `+`. Native buttons and
 existing-window choices have accessibility labels. One presentation holds
 Auto-hide open through application selection, creation, fallback and placement.
@@ -1900,7 +1978,7 @@ public menu operation. Exact **New Window** and recognized complete localized
 window titles take priority. Bare ⌘N qualifies only from the File menu (by
 position) and only with an allow-listed complete window or generic document
 title; otherwise reopen, then **Use a window from this desktop**. The small
-localized title table is disclosed in SECURITY.md. Unknown titles use reopen. There is no consent UI, answer store,
+localized title table is disclosed in SECURITY_DISCLOSURES.md. Unknown titles use reopen. There is no consent UI, answer store,
 or unanswered-question reservation.
 The obsolete defaults key is ignored. Several instances use the active or
 frontmost instance automatically. Missing menu commands use
@@ -1921,7 +1999,7 @@ refreshes native desktop observation with cached windows, without an AX window
 inventory. Placement still validates a full snapshot. Tests use fake AX trees
 and delayed readers. Unsupported menu operations try reopening automatically. If no window arrives
 within the request timeout, the pane offers current-desktop window choices. Launch and menu requests can create no window. They
-cannot be undone by frame rollback. See [SECURITY.md](../SECURITY.md) for the
+cannot be undone by frame rollback. See [SECURITY_DISCLOSURES.md](SECURITY_DISCLOSURES.md#permissions-and-dependencies) for the
 exact operation and retained-data scope.
 
 Before ordinary Tabbed arrival routing, the model reserves new windows of the

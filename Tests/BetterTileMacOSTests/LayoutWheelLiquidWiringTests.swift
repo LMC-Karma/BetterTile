@@ -1,6 +1,7 @@
 import AppKit
 import Metal
 import QuartzCore
+import BetterTileTestSupport
 import Testing
 @testable import BetterTileCore
 @testable import BetterTileMacOS
@@ -74,11 +75,11 @@ import Testing
             let content = LayoutWheelLiquidDefaults.content(configuration: configuration, currentMode: .tabbed)
             let presenter = Presenter()
             var pointer = BTPoint(x: 800, y: 500)
-            var time = 1.0
+            let time = MainActorBox(1.0)
             let target = LayoutWheelTarget(windowID: .init(rawValue: "fixture"), displayID: .init(rawValue: "display"),
                                           visibleFrame: .init(x: 0, y: 0, width: 1600, height: 1000), layoutMode: .tabbed)
             let controller = LayoutWheelController(configuration: .init(layoutWheel: configuration), presenter: presenter,
-                metrics: .grouped, now: { time }, pointerProvider: { pointer },
+                metrics: .grouped, now: { time.value }, pointerProvider: { pointer },
                 addGlobalMonitor: { _, _ in NSObject() }, addLocalMonitor: { _, _ in NSObject() }, removeMonitor: { _ in })
             controller.captureHandler = { _ in target }
             controller.previewHandler = { _, _ in .ready(placements: []) }
@@ -126,7 +127,7 @@ import Testing
                         let angle = content.layout.slotAngle(sector.rawValue)
                         let radius = content.layout.iconRadii.last!
                         move(.init(x: cos(angle) * radius, y: sin(angle) * radius), center: center)
-                        time += 0.21
+                        time.value += 0.21
                         controller.handleFanDeadline()
                         move(point, center: center)
                         let state = LayoutWheelLiquidState(selection: presenter.last?.selection, fan: presenter.last?.fan, pointer: point)
@@ -141,12 +142,12 @@ import Testing
     @Test func lateFallbackReopensWithMatchingPanelGeometry() throws {
         let presenter = Presenter()
         presenter.failOpenToPanel = true
-        var pointer = BTPoint(x: 800, y: 500)
+        let pointer = MainActorBox(BTPoint(x: 800, y: 500))
         let configuration = LayoutWheelConfiguration(style: .grouped, levelCount: .two)
         let target = LayoutWheelTarget(windowID: .init(rawValue: "fixture"), displayID: .init(rawValue: "display"),
                                       visibleFrame: .init(x: 0, y: 0, width: 1600, height: 1000))
         let controller = LayoutWheelController(configuration: .init(layoutWheel: configuration), presenter: presenter,
-            pointerProvider: { pointer }, addGlobalMonitor: { _, _ in NSObject() },
+            pointerProvider: { pointer.value }, addGlobalMonitor: { _, _ in NSObject() },
             addLocalMonitor: { _, _ in NSObject() }, removeMonitor: { _ in })
         controller.captureHandler = { _ in target }
         controller.previewHandler = { _, _ in .ready(placements: []) }
@@ -159,8 +160,8 @@ import Testing
         #expect(presenter.events.filter { $0 == "open" }.count == 2)
         #expect(presenter.last?.placement.diameter == LayoutWheelMetrics.grouped.groupedPresentationDiameter)
         let center = try #require(presenter.last?.placement.center)
-        pointer = .init(x: center.x + 124, y: center.y)
-        controller.handlePointer(pointer)
+        pointer.value = .init(x: center.x + 124, y: center.y)
+        controller.handlePointer(pointer.value)
         controller.handleModifiers([])
         #expect(commits == [.windowAction(.nextDisplay)])
     }

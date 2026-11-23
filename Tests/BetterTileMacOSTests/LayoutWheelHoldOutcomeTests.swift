@@ -1,4 +1,5 @@
 import AppKit
+import BetterTileTestSupport
 import Testing
 @testable import BetterTileCore
 @testable import BetterTileMacOS
@@ -199,16 +200,17 @@ func wheelHoldModelCancellationReasonsStayDistinct(reason: String) throws {
     #expect(outcomes.first?.contains("outcome=cancel reason=controllerReleased") == true)
 }
 
-/// SECURITY.md: activation diagnostics hold no event content. A selection
-/// or a pointer distance is derived from the pointer, so neither is logged.
+/// docs/SECURITY_DISCLOSURES.md: activation diagnostics hold no event
+/// content. A selection or a pointer distance is derived from the pointer, so
+/// neither is logged.
 @Test(.macOSTestApplication, arguments: [LayoutWheelStyle.custom, .grouped]) @MainActor
 func wheelDiagnosticsOmitTheSelectionAndPointerDistance(style: LayoutWheelStyle) {
-    var pointer = BTPoint(x: 500, y: 400)
+    let pointer = MainActorBox(BTPoint(x: 500, y: 400))
     var messages: [String] = []
     var commits: [LayoutWheelCommand] = []
     let controller = LayoutWheelController(
         configuration: .init(layoutWheel: .init(style: style, levelCount: .two)), presenter: HoldOutcomePresenter(),
-        activationDelay: .seconds(3600), pointerProvider: { pointer },
+        activationDelay: .seconds(3600), pointerProvider: { pointer.value },
         addGlobalMonitor: { _, _ in NSObject() }, addLocalMonitor: { _, _ in NSObject() }, removeMonitor: { _ in })
     controller.captureHandler = { _ in
         LayoutWheelTarget(windowID: .init(rawValue: "fixture"), displayID: .init(rawValue: "fake-display"),
@@ -223,8 +225,8 @@ func wheelDiagnosticsOmitTheSelectionAndPointerDistance(style: LayoutWheelStyle)
     controller.handleActivationDeadline(generation: 1)
     #expect(controller.isOpen)
     for _ in 1...12 {
-        pointer.x += 10
-        controller.handlePointer(pointer)
+        pointer.value.x += 10
+        controller.handlePointer(pointer.value)
     }
     controller.handleModifiers([.control, .option])
     #expect(commits.count == 1)

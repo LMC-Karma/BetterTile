@@ -73,7 +73,7 @@ Icon Composer's live glass layers.
 
 No new dependency, permission, networking, private API, or window mutation is
 introduced. The existing local icon preference and generated Finder icon data
-stay on the Mac. See [the security disclosure](../../SECURITY.md#app-icon-customization).
+stay on the Mac. See [the security disclosure](../SECURITY_DISCLOSURES.md#app-icon-customization).
 
 ## Verification
 

@@ -233,27 +233,46 @@ func aMainActorSleepRegistersBeforeItsTaskSuspends() async throws {
 }
 
 /// The settlement shape: eight 40 ms samples on the main actor. A one-second
-/// advance must not jump past a sample that is still registering. Before the
-/// clock and driver fix, nearly every iteration skipped samples.
+/// advance must not move virtual time while a resumed sample is still
+/// registering its next wait. Each wake must therefore land exactly on its
+/// 40 ms step. Before the clock and driver fix, nearly every loop skipped
+/// samples.
+///
+/// Ten loops share one advance, so the driver must wait for all ten resumed
+/// samples at each step. Each step costs about two main-queue turns, however
+/// many loops run. Ten sequential advances cost about 200 turns, and in a full
+/// App test run each turn waits behind other tests' synchronous main-actor
+/// work, such as snapshot rendering. That made this test take 46–55 s against
+/// its 60 s limit.
 @Test(.appTestApplication, .timeLimit(.minutes(1))) @MainActor
 func advanceRunsEveryStepOfAMainActorSamplingLoop() async throws {
     let system = makeManualWindowSystem()
+    let manual = try #require(system.manualClock)
     let clock = system.clock
-    var lateIterations: [Int] = []
-    for iteration in 0..<10 {
-        var samples = 0
-        let sampling = Task { @MainActor in
+    let start = manual.now
+    let loopCount = 10
+    var wakes = Array(repeating: [Duration](), count: loopCount)
+    var loops: [Task<Void, Never>] = []
+    for loop in 0..<loopCount {
+        // An immediate task registers its first wait before this loop continues.
+        loops.append(Task.immediate { @MainActor in
             for _ in 0..<8 {
                 try? await clock.sleep(for: .milliseconds(40))
-                samples += 1
+                wakes[loop].append(manual.now - start)
             }
-        }
-        await system.advance(by: .seconds(1))
-        if samples != 8 { lateIterations.append(iteration) }
-        sampling.cancel()
-        await sampling.value
+        })
     }
-    #expect(lateIterations.isEmpty, "Samples were skipped in \(lateIterations.count) of 10 iterations: \(lateIterations)")
+    #expect(manual.pendingSleepCount == loopCount, "Every loop registers its first sample before the advance")
+    await system.advance(by: .seconds(1))
+    let steps = (1...8).map { Duration.milliseconds(40 * $0) }
+    let lateLoops = wakes.indices.filter { wakes[$0] != steps }
+    #expect(lateLoops.isEmpty, """
+        Samples were skipped or woke off their 40 ms steps in \(lateLoops.count) of \(loopCount) loops: \
+        \(lateLoops.map { wakes[$0] })
+        """)
+    // A skipped sample leaves a wait past the advance; cancellation ends it.
+    loops.forEach { $0.cancel() }
+    for loop in loops { await loop.value }
 }
 
 /// Runs actor jobs on the main queue, like a main-actor task, but can hold them.

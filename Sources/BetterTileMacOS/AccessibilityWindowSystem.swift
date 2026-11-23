@@ -2813,6 +2813,23 @@ extension AccessibilityWindowSystem: WindowStackReading {
         return frames.count == ids.count ? frames : nil
     }
 
+    public func windowServerPresence(for ids: Set<WindowID>) -> [WindowID: WindowServerPresence]? {
+        var exact: [CGWindowID: WindowID] = [:]
+        for id in ids { if let number = identities.exactWindowID(for: id) { exact[number] = id } }
+        guard !exact.isEmpty else { return [:] }
+        guard let records = targetedWindowServerRecords(ids: Set(exact.keys)) else { return nil }
+        var presence: [WindowID: WindowServerPresence] = [:]
+        for record in records {
+            guard let id = exact[record.windowID] else { continue }
+            // A reused window number of another process is not this window.
+            if let owner = identities.records[id]?.application.processIdentifier, owner != record.processIdentifier {
+                continue
+            }
+            presence[id] = WindowServerPresence(isOnScreen: record.isOnscreen, processIdentifier: record.processIdentifier)
+        }
+        return presence
+    }
+
     public func onScreenStack(labeling ids: Set<WindowID>) -> [SeamStackEntry]? {
         guard let records = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
             as? [[CFString: Any]] else { return nil }
