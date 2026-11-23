@@ -18,6 +18,7 @@
 		F52900000000000000000001 /* SavedLayoutFileWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = F52900000000000000000002 /* SavedLayoutFileWatcher.swift */; };
 		E7B9BA700000000000000003 /* SavedLayoutPositions.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7B9BA700000000000000004 /* SavedLayoutPositions.swift */; };
 		E7B9BA700000000000000001 /* SavedLayoutPagePlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7B9BA700000000000000002 /* SavedLayoutPagePlan.swift */; };
+		D1A600000000000000000001 /* CopyDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1A600000000000000000002 /* CopyDiagnostics.swift */; };
 		A2F000000000000000000001 /* ShortcutsSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2F000000000000000000002 /* ShortcutsSettings.swift */; };
 		B10000000000000000000001 /* SavedLayoutNewLayoutSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000001 /* SavedLayoutNewLayoutSheet.swift */; };
 		C02410240000000000000002 /* LayoutWheelFeelSlider.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02410240000000000000012 /* LayoutWheelFeelSlider.swift */; };
@@ -80,6 +81,7 @@
 		F52900000000000000000002 /* SavedLayoutFileWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedLayoutFileWatcher.swift; sourceTree = "<group>"; };
 		E7B9BA700000000000000004 /* SavedLayoutPositions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedLayoutPositions.swift; sourceTree = "<group>"; };
 		E7B9BA700000000000000002 /* SavedLayoutPagePlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedLayoutPagePlan.swift; sourceTree = "<group>"; };
+		D1A600000000000000000002 /* CopyDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CopyDiagnostics.swift; sourceTree = "<group>"; };
 		A2F000000000000000000002 /* ShortcutsSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutsSettings.swift; sourceTree = "<group>"; };
 		B20000000000000000000001 /* SavedLayoutNewLayoutSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedLayoutNewLayoutSheet.swift; sourceTree = "<group>"; };
 		C02410240000000000000012 /* LayoutWheelFeelSlider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LayoutWheelFeelSlider.swift; sourceTree = "<group>"; };
@@ -197,6 +199,7 @@
 				C6261AA00000000000000002 /* SavedLayoutMenuThumbnail.swift */,
 				E7B9BA700000000000000004 /* SavedLayoutPositions.swift */,
 				E7B9BA700000000000000002 /* SavedLayoutPagePlan.swift */,
+				D1A600000000000000000002 /* CopyDiagnostics.swift */,
 				200000000000000000000024 /* SavedLayoutEditor.swift */,
 				2000000000000000000000F1 /* SavedLayoutCanvasView.swift */,
 				200000000000000000000023 /* SavedLayoutFiles.swift */,
@@ -345,6 +348,7 @@
 				C6261AA00000000000000001 /* SavedLayoutMenuThumbnail.swift in Sources */,
 				E7B9BA700000000000000003 /* SavedLayoutPositions.swift in Sources */,
 				E7B9BA700000000000000001 /* SavedLayoutPagePlan.swift in Sources */,
+				D1A600000000000000000001 /* CopyDiagnostics.swift in Sources */,
 				100000000000000000000024 /* SavedLayoutEditor.swift in Sources */,
 				1000000000000000000000F1 /* SavedLayoutCanvasView.swift in Sources */,
 				100000000000000000000023 /* SavedLayoutFiles.swift in Sources */,

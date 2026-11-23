@@ -836,6 +836,16 @@ final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         NSWorkspace.shared.open(url)
     }
 
+    @objc private func copyDiagnostics() {
+        closePopover(reason: .command)
+#if DEBUG
+        let automaticUpdateChecks: Bool? = nil
+#else
+        let automaticUpdateChecks: Bool? = updaterController.updater.automaticallyChecksForUpdates
+#endif
+        CopyDiagnosticsCommand.perform(model: model, automaticUpdateChecks: automaticUpdateChecks)
+    }
+
 #if !DEBUG
     /// Translates one updater outcome into the menu-bar indicator. The decision
     /// itself lives in `UpdateIndicator` so it can be tested without Sparkle.
@@ -962,6 +972,7 @@ final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         configureUpdateMenuItem(updateItem)
 #endif
         addItem("Send Feedback…", action: #selector(sendFeedback))
+        addItem(CopyDiagnosticsCommand.menuTitle, action: #selector(copyDiagnostics))
         menu.addItem(.separator())
         addItem("Quit \(BetterTileVariant.displayName)", action: #selector(quitApplication), keyEquivalent: "q")
         return updateItem
