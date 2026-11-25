@@ -1,98 +1,540 @@
-<!doctype html><html lang="en" data-theme="dark"><head><meta charset="utf-8"><script>document.documentElement.classList.add('js')</script><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="dark"><meta name="theme-color" content="#07090d"><title>BetterTile — Your windows. Working together.</title><meta name="description" content="A free, native macOS window manager. Snap windows into place, resize neighbours together, let Adaptive tiling make room as your work grows, and bring a desktop back with Saved Layouts."><meta property="og:type" content="website"><meta property="og:site_name" content="BetterTile"><meta property="og:url" content="https://lmc-karma.github.io/BetterTile/"><meta property="og:title" content="BetterTile — Your windows. Working together."><meta property="og:description" content="A free, native macOS window manager. Snap windows into place, resize neighbours together, let Adaptive tiling make room as your work grows, and bring a desktop back with Saved Layouts."><meta property="og:image" content="https://lmc-karma.github.io/BetterTile/assets/identity/social-preview.png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:image:alt" content="BetterTile: Your windows. Working together."><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="BetterTile — Your windows. Working together."><meta name="twitter:description" content="A free, native macOS window manager. Snap windows into place, resize neighbours together, let Adaptive tiling make room as your work grows, and bring a desktop back with Saved Layouts."><meta name="twitter:image" content="https://lmc-karma.github.io/BetterTile/assets/identity/social-preview.png"><meta name="twitter:image:alt" content="BetterTile: Your windows. Working together."><link rel="canonical" href="https://lmc-karma.github.io/BetterTile/"><link rel="icon" href="favicon.ico" sizes="48x48"><link rel="icon" type="image/png" href="assets/identity/app-icon-native-dark-32.png"><link rel="apple-touch-icon" href="assets/identity/app-icon-native-dark-256.png"><link rel="stylesheet" href="redesign.css"><script type="module" src="redesign.js"></script><script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"BetterTile","description":"A free, native macOS window manager. Snap windows into place, resize neighbours together, let Adaptive tiling make room as your work grows, and bring a desktop back with Saved Layouts.","url":"https://lmc-karma.github.io/BetterTile/","image":"https://lmc-karma.github.io/BetterTile/assets/identity/social-preview.png","operatingSystem":"macOS 26 or later","applicationCategory":"UtilitiesApplication","downloadUrl":"https://github.com/LMC-Karma/BetterTile/releases/latest","releaseNotes":"https://github.com/LMC-Karma/BetterTile/releases/latest","license":"https://www.gnu.org/licenses/gpl-3.0.html","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script></head><body class="product-page"><a class="skip-link" href="#main">Skip to content</a>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BetterTile — Your windows. Working together.</title>
+<meta name="description" content="Drag the edge between two windows and both resize together. BetterTile is a free, native macOS window manager with linked resizing, Adaptive tiling, snapping and Saved Layouts.">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#07090d">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="BetterTile">
+<meta property="og:url" content="https://lmc-karma.github.io/BetterTile/">
+<meta property="og:title" content="BetterTile — Your windows. Working together.">
+<meta property="og:description" content="Drag the edge between two windows and both resize together. A free, native window manager for macOS.">
+<meta property="og:image" content="https://lmc-karma.github.io/BetterTile/assets/identity/social-preview.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="BetterTile: Your windows. Working together.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="BetterTile — Your windows. Working together.">
+<meta name="twitter:description" content="Drag the edge between two windows and both resize together. A free, native window manager for macOS.">
+<meta name="twitter:image" content="https://lmc-karma.github.io/BetterTile/assets/identity/social-preview.png">
+<meta name="twitter:image:alt" content="BetterTile: Your windows. Working together.">
+<link rel="canonical" href="https://lmc-karma.github.io/BetterTile/">
+<link rel="icon" href="assets/identity/favicon.svg" type="image/svg+xml">
+<link rel="icon" type="image/png" href="assets/identity/app-icon-native-dark-32.png">
+<link rel="apple-touch-icon" href="assets/identity/app-icon-native-dark-256.png">
+<link rel="preload" href="assets/fonts/Inter-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="styles.css">
+<script>document.documentElement.classList.add('js')</script>
+<script src="script.js" defer></script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"BetterTile","description":"A free, native macOS window manager. Snap windows into place, resize neighbours together, let Adaptive tiling make room as your work grows, and bring a desktop back with Saved Layouts.","url":"https://lmc-karma.github.io/BetterTile/","image":"https://lmc-karma.github.io/BetterTile/assets/identity/social-preview.png","operatingSystem":"macOS 26 or later","applicationCategory":"UtilitiesApplication","downloadUrl":"https://github.com/LMC-Karma/BetterTile/releases/latest","releaseNotes":"https://github.com/LMC-Karma/BetterTile/releases/latest","license":"https://www.gnu.org/licenses/gpl-3.0.html","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
 
-<header class="site-header wrap"><a class="wordmark" href="./" aria-label="BetterTile home"><img src="assets/identity/app-icon-native-dark-128.png" width="40" height="40" alt=""><span>BetterTile</span></a><nav class="desktop-nav" aria-label="Main navigation"><a href="#features">Features</a><a href="#start">How it works</a><a href="https://github.com/LMC-Karma/BetterTile">GitHub</a></nav><div class="header-actions"><a href="https://github.com/LMC-Karma/BetterTile/releases/latest" class="button primary compact">Download</a><button class="menu-toggle" aria-expanded="false" aria-controls="mobile-menu" aria-label="Open navigation"><svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 8h14M5 16h14"/></svg></button></div><nav id="mobile-menu" class="mobile-nav" aria-label="Mobile navigation" hidden><a href="#features">Features</a><a href="#start">How it works</a><a href="https://github.com/LMC-Karma/BetterTile">GitHub</a></nav></header>
-<main id="main">
-<section class="hero wrap" aria-labelledby="hero-title">
-  <div class="hero-grid"><h1 id="hero-title">Your windows.<br><span>Working together.</span></h1><div class="hero-copy"><p>A native Mac window manager that keeps your workspace in step.</p><div class="actions"><a href="https://github.com/LMC-Karma/BetterTile/releases/latest" class="button primary">Download for Mac <svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v16m-6-6 6 6 6-6"/></svg></a><a class="text-button" href="#overview"><svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5 11 7-11 7Z"/></svg> Watch demo</a></div><p class="hero-meta"><b>Apple silicon Mac, macOS 26 or later.</b> Free and open source.</p><p class="hero-version">Public beta · Latest disk image from GitHub</p></div></div>
-  <div id="overview" class="overview"><figure class="feature-media media-overview" data-feature-media="overview" style="--media-ratio:1920/1080">
-    <video id="video-overview" autoplay loop muted playsinline preload="none" width="1920" height="1080" poster="assets/media/overview.jpg" data-video-src="assets/media/overview.mp4" aria-label="Overview of drag snapping, linked resizing, Adaptive tiling, Tabbed with the Layout Gallery, the Layout Wheel, Saved Layouts and multiple displays."></video>
-    <div class="media-footer"><figcaption>A 38-second tour of BetterTile</figcaption><button class="video-toggle" data-paused="true" aria-controls="video-overview" aria-label="Play A 38-second tour of BetterTile video" title="Play video" hidden><svg class="ui-icon control-pause" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg><svg class="ui-icon control-play" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5 11 7-11 7Z"/></svg></button></div>
-    <p class="video-error" role="status" hidden>Video could not load. Try playing it again.</p>
-    <noscript><a class="text-link" href="assets/media/overview.mp4">Open A 38-second tour of BetterTile video</a></noscript>
-  </figure></div>
-  <nav id="features" class="feature-index" aria-label="Explore features"><a href="#linked">Linked resizing</a><a href="#adaptive">Adaptive tiling</a><a href="#snapping">Snapping</a><a href="#saved-layouts">Saved Layouts</a><a href="#tabbed">Tabbed</a><a href="#wheel">Layout Wheel</a><a href="#keyboard">Shortcuts</a></nav>
-</section>
-<span id="bento" class="anchor-alias" aria-hidden="true"></span>
-<section class="media-section media-row bento-section wrap section" id="adaptive" aria-labelledby="bento-title"><div class="media-copy"><h2 id="bento-title">Adaptive tiling.<br><span>Grows as you work.</span></h2><p>Open a new window. Adaptive tiling makes room in the layout, choosing a split that keeps movement and resizing to a minimum.</p><p class="fine">When an app stops responding and comes back, its windows rejoin the layout.</p><a href="#start" class="text-link">Get started <svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v16m-6-6 6 6 6-6"/></svg></a></div><figure class="feature-media media-bento" data-feature-media="bento" style="--media-ratio:1920/1080">
-    <video id="video-bento" autoplay loop muted playsinline preload="none" width="1920" height="1080" poster="assets/media/bento.jpg" data-video-src="assets/media/bento.mp4" aria-label="New windows open and Adaptive tiling gives each one a pane."></video>
-    <div class="media-footer"><figcaption>Adaptive tiling</figcaption><button class="video-toggle" data-paused="true" aria-controls="video-bento" aria-label="Play Adaptive tiling video" title="Play video" hidden><svg class="ui-icon control-pause" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg><svg class="ui-icon control-play" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5 11 7-11 7Z"/></svg></button></div>
-    <p class="video-error" role="status" hidden>Video could not load. Try playing it again.</p>
-    <noscript><a class="text-link" href="assets/media/bento.mp4">Open Adaptive tiling video</a></noscript>
-  </figure></section>
-<section class="media-section media-row media-flip wrap section" id="linked" aria-labelledby="linked-title"><div class="media-copy"><h2 id="linked-title">Resize together.<br><span>Stay aligned.</span></h2><p>Give one window more room without leaving the other behind. Drag their shared boundary and both sides stay aligned.</p><p class="fine">Choose Live Resize to see each change as you move. Or choose Resize Preview: the new frames show during the drag and apply when you release.</p></div><figure class="feature-media media-linked" data-feature-media="linked" style="--media-ratio:1920/1080">
-    <video id="video-linked" autoplay loop muted playsinline preload="none" width="1920" height="1080" poster="assets/media/resize.jpg" data-video-src="assets/media/resize.mp4" aria-label="A shared boundary moves with Live Resize, and the neighbouring windows resize together."></video>
-    <div class="media-footer"><figcaption>Linked resizing</figcaption><button class="video-toggle" data-paused="true" aria-controls="video-linked" aria-label="Play Linked resizing video" title="Play video" hidden><svg class="ui-icon control-pause" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg><svg class="ui-icon control-play" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5 11 7-11 7Z"/></svg></button></div>
-    <p class="video-error" role="status" hidden>Video could not load. Try playing it again.</p>
-    <noscript><a class="text-link" href="assets/media/resize.mp4">Open Linked resizing video</a></noscript>
-  </figure></section>
-<section class="media-section media-row wrap section" id="snapping" aria-labelledby="snapping-title"><div class="media-copy"><h2 id="snapping-title">See the fit.<br><span>Then let go.</span></h2><p>Drag a title bar toward an edge or corner. Preview the placement, then release to snap into place.</p><p class="fine">Adjust the Snap Zones in Settings.</p></div><figure class="feature-media media-snapping" data-feature-media="snapping" style="--media-ratio:1920/1080">
-    <video id="video-snapping" autoplay loop muted playsinline preload="none" width="1920" height="1080" poster="assets/media/snap.jpg" data-video-src="assets/media/snap.mp4" aria-label="Windows move to an edge, show a placement preview, then snap into place."></video>
-    <div class="media-footer"><figcaption>Drag snapping</figcaption><button class="video-toggle" data-paused="true" aria-controls="video-snapping" aria-label="Play Drag snapping video" title="Play video" hidden><svg class="ui-icon control-pause" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg><svg class="ui-icon control-play" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5 11 7-11 7Z"/></svg></button></div>
-    <p class="video-error" role="status" hidden>Video could not load. Try playing it again.</p>
-    <noscript><a class="text-link" href="assets/media/snap.mp4">Open Drag snapping video</a></noscript>
-  </figure></section>
-<section class="media-section media-row media-flip wrap section" id="saved-layouts" aria-labelledby="saved-title"><div class="media-copy"><h2 id="saved-title">Your desktop.<br><span>Back in one click.</span></h2><p>Save a desktop’s arrangement as a Saved Layout. Apply it from the menu bar panel, the Layout Wheel or its own shortcut.</p><p>Each pane can prefer apps or an App Group. While a layout is followed, a new window of a preferred app goes into its pane. Bind a layout to a set of displays, and BetterTile applies it when those displays connect.</p><p class="fine">Apply never opens an app or takes a window from another desktop. Undo Apply puts the windows back. Saved Layouts are local files with app bundle IDs and layout shapes, not window titles or documents.</p></div><figure class="feature-media media-saved-layouts" data-feature-media="saved-layouts" style="--media-ratio:1920/1080">
-    <video id="video-saved-layouts" autoplay loop muted playsinline preload="none" width="1920" height="1080" poster="assets/media/saved-layouts.jpg" data-video-src="assets/media/saved-layouts.mp4" aria-label="A Saved Layout named Writing is applied from the menu bar panel. The windows arrange, and Undo puts them back."></video>
-    <div class="media-footer"><figcaption>Saved Layouts</figcaption><button class="video-toggle" data-paused="true" aria-controls="video-saved-layouts" aria-label="Play Saved Layouts video" title="Play video" hidden><svg class="ui-icon control-pause" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg><svg class="ui-icon control-play" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5 11 7-11 7Z"/></svg></button></div>
-    <p class="video-error" role="status" hidden>Video could not load. Try playing it again.</p>
-    <noscript><a class="text-link" href="assets/media/saved-layouts.mp4">Open Saved Layouts video</a></noscript>
-  </figure></section>
-<div class="feature-pair wrap section">
-  <section class="feature-card" id="tabbed" aria-labelledby="tabbed-title"><div class="media-copy"><h2 id="tabbed-title">More within reach.<br><span>Less on the surface.</span></h2><p>Tabbed groups windows in resizable panes. Select a tab to bring its window forward. Drag tabs between panes, or drag a floating window into a pane as a tab.</p><p class="fine">Turn off Stage Manager for Tabbed. Pane assignments last for the current app session. <a href="https://github.com/LMC-Karma/BetterTile/releases/latest">Beta details <svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg></a></p></div><figure class="feature-media media-tabbed" data-feature-media="tabbed" style="--media-ratio:1920/1080">
-    <video id="video-tabbed" autoplay loop muted playsinline preload="none" width="1920" height="1080" poster="assets/media/tabbed.jpg" data-video-src="assets/media/tabbed.mp4" aria-label="Tabs switch the visible window, a tab moves between two panes, and a floating window joins a pane as a tab."></video>
-    <div class="media-footer"><figcaption>Tabbed</figcaption><button class="video-toggle" data-paused="true" aria-controls="video-tabbed" aria-label="Play Tabbed video" title="Play video" hidden><svg class="ui-icon control-pause" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg><svg class="ui-icon control-play" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5 11 7-11 7Z"/></svg></button></div>
-    <p class="video-error" role="status" hidden>Video could not load. Try playing it again.</p>
-    <noscript><a class="text-link" href="assets/media/tabbed.mp4">Open Tabbed video</a></noscript>
-  </figure><div class="feature-extra"><h3>Layout Gallery</h3><p>Open the Layout Gallery from a tab bar’s … menu. It shows a picture of each layout. The + button in a pane opens an app straight into it, and tab bars can hide until you point at them.</p></div><figure class="feature-media media-layout-gallery" data-feature-media="layout-gallery" style="--media-ratio:1920/1080">
-    <video id="video-layout-gallery" autoplay loop muted playsinline preload="none" width="1920" height="1080" poster="assets/media/layout-gallery.jpg" data-video-src="assets/media/layout-gallery.mp4" aria-label="The Layout Gallery opens from the tab bar menu, previews the 2×2 Grid, and applies it while each pane keeps its tabs."></video>
-    <div class="media-footer"><figcaption>Layout Gallery</figcaption><button class="video-toggle" data-paused="true" aria-controls="video-layout-gallery" aria-label="Play Layout Gallery video" title="Play video" hidden><svg class="ui-icon control-pause" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg><svg class="ui-icon control-play" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5 11 7-11 7Z"/></svg></button></div>
-    <p class="video-error" role="status" hidden>Video could not load. Try playing it again.</p>
-    <noscript><a class="text-link" href="assets/media/layout-gallery.mp4">Open Layout Gallery video</a></noscript>
-  </figure></section>
-  <section class="feature-card" id="wheel" aria-labelledby="wheel-title"><div class="media-copy"><h2 id="wheel-title">Your next move.<br><span>Within reach.</span></h2><p>Open the Layout Wheel: hold <kbd>⌃</kbd> <kbd>⌥</kbd> <kbd>⇧</kbd>, choose a sector, and release. Set it up on its own Settings page.</p><p class="fine">In a One Level wheel, the bottom sector is Repair Layout. Escape or the center cancels. Optional middle click reserves that button system-wide while enabled.</p></div><figure class="feature-media media-wheel" data-feature-media="wheel" style="--media-ratio:1920/1080">
-    <video id="video-wheel" autoplay loop muted playsinline preload="none" width="1920" height="1080" poster="assets/media/wheel.jpg" data-video-src="assets/media/wheel.mp4" aria-label="The Layout Wheel opens at the pointer and places a window on the right half. Then Repair Layout arranges the desktop."></video>
-    <div class="media-footer"><figcaption>Layout Wheel</figcaption><button class="video-toggle" data-paused="true" aria-controls="video-wheel" aria-label="Play Layout Wheel video" title="Play video" hidden><svg class="ui-icon control-pause" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg><svg class="ui-icon control-play" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5 11 7-11 7Z"/></svg></button></div>
-    <p class="video-error" role="status" hidden>Video could not load. Try playing it again.</p>
-    <noscript><a class="text-link" href="assets/media/wheel.mp4">Open Layout Wheel video</a></noscript>
-  </figure><div class="feature-extra"><h3>Grouped style</h3><p>Choose Grouped for groups such as Size, Thirds, Displays, Mode and Choose Layout, each with its own fan of commands. Or keep Custom, with one or two levels. The wheel can change a desktop’s mode, choose a Tabbed layout and apply Saved Layouts.</p></div><figure class="feature-media media-wheel-grouped" data-feature-media="wheel-grouped" style="--media-ratio:1920/1080">
-    <video id="video-wheel-grouped" autoplay loop muted playsinline preload="none" width="1920" height="1080" poster="assets/media/wheel-grouped.jpg" data-video-src="assets/media/wheel-grouped.mp4" aria-label="In the Grouped Layout Wheel, a rest on Thirds opens its fan and Left Two Thirds places the window. A quick flick on Size maximizes it."></video>
-    <div class="media-footer"><figcaption>Layout Wheel, Grouped style</figcaption><button class="video-toggle" data-paused="true" aria-controls="video-wheel-grouped" aria-label="Play Layout Wheel, Grouped style video" title="Play video" hidden><svg class="ui-icon control-pause" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg><svg class="ui-icon control-play" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5 11 7-11 7Z"/></svg></button></div>
-    <p class="video-error" role="status" hidden>Video could not load. Try playing it again.</p>
-    <noscript><a class="text-link" href="assets/media/wheel-grouped.mp4">Open Layout Wheel, Grouped style video</a></noscript>
-  </figure></section>
-</div>
-<section class="media-section media-row wrap section" id="keyboard" aria-labelledby="keyboard-title"><div class="media-copy"><h2 id="keyboard-title">Keep your hands<br><span>on the keys.</span></h2><p>Place windows with global shortcuts. Undo a placement when you want to try another arrangement.</p><p class="fine">Give each command its keys on the Shortcuts page in Settings, with duplicate checks.</p></div><figure class="feature-media media-keyboard" data-feature-media="keyboard" style="--media-ratio:1920/1080">
-    <video id="video-keyboard" autoplay loop muted playsinline preload="none" width="1920" height="1080" poster="assets/media/keyboard.jpg" data-video-src="assets/media/keyboard.mp4" aria-label="Keyboard shortcuts place a window on the left half and maximize it. Restore then steps back one placement at a time."></video>
-    <div class="media-footer"><figcaption>Keyboard shortcuts and undo</figcaption><button class="video-toggle" data-paused="true" aria-controls="video-keyboard" aria-label="Play Keyboard shortcuts and undo video" title="Play video" hidden><svg class="ui-icon control-pause" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg><svg class="ui-icon control-play" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5 11 7-11 7Z"/></svg></button></div>
-    <p class="video-error" role="status" hidden>Video could not load. Try playing it again.</p>
-    <noscript><a class="text-link" href="assets/media/keyboard.mp4">Open Keyboard shortcuts and undo video</a></noscript>
-  </figure></section>
-<section class="more-section wrap section" id="more" aria-labelledby="more-title"><div class="section-heading"><div><h2 id="more-title">Also new<br><span>in the beta.</span></h2></div><div><p>Two more changes in the beta. The release notes list the rest.</p><a href="https://github.com/LMC-Karma/BetterTile/releases/latest" class="text-link">What’s new <svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg></a></div></div><div class="more-grid"><article class="more-card"><div class="more-copy"><h3>Repair Layout</h3><p>Rebuild a desktop’s layout from its visible windows. Adaptive panes return to equal shares.</p></div><figure class="feature-media media-repair-layout" data-feature-media="repair-layout" style="--media-ratio:1920/1080">
-    <video id="video-repair-layout" autoplay loop muted playsinline preload="none" width="1920" height="1080" poster="assets/media/repair-layout.jpg" data-video-src="assets/media/repair-layout.mp4" aria-label="Repair Layout runs from the menu bar panel, and three Adaptive panes return to equal shares."></video>
-    <div class="media-footer"><figcaption>Repair Layout</figcaption><button class="video-toggle" data-paused="true" aria-controls="video-repair-layout" aria-label="Play Repair Layout video" title="Play video" hidden><svg class="ui-icon control-pause" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg><svg class="ui-icon control-play" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5 11 7-11 7Z"/></svg></button></div>
-    <p class="video-error" role="status" hidden>Video could not load. Try playing it again.</p>
-    <noscript><a class="text-link" href="assets/media/repair-layout.mp4">Open Repair Layout video</a></noscript>
-  </figure></article><article class="more-card"><div class="more-copy"><h3>Multiple displays</h3><p>Next Display and Previous Display make room on the destination and close the gap on the source.</p></div><figure class="feature-media media-multi-display" data-feature-media="multi-display" style="--media-ratio:1920/1080">
-    <video id="video-multi-display" autoplay loop muted playsinline preload="none" width="1920" height="1080" poster="assets/media/multi-display.jpg" data-video-src="assets/media/multi-display.mp4" aria-label="Previous Display sends a window to the other display. The destination makes room and the source closes the gap."></video>
-    <div class="media-footer"><figcaption>Multiple displays</figcaption><button class="video-toggle" data-paused="true" aria-controls="video-multi-display" aria-label="Play Multiple displays video" title="Play video" hidden><svg class="ui-icon control-pause" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg><svg class="ui-icon control-play" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 5 11 7-11 7Z"/></svg></button></div>
-    <p class="video-error" role="status" hidden>Video could not load. Try playing it again.</p>
-    <noscript><a class="text-link" href="assets/media/multi-display.mp4">Open Multiple displays video</a></noscript>
-  </figure></article></div></section>
-<section class="ownership wrap section" aria-labelledby="ownership-title"><div class="section-heading"><div><h2 id="ownership-title">No paid tier.<br><span>No tracking.</span></h2></div><div><p>Free forever, with the source open to everyone. No paid tier, subscription, advertising, behavioral tracking, or sale of user data.</p><a href="https://github.com/LMC-Karma/BetterTile" class="text-link">Explore the source <svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg></a></div></div>
-  <div class="tiles" data-tiles>
-    <article class="tile tile-free"><span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span><div class="tile-body"><div class="tile-copy"><h3>Free, with no second tier.</h3><p>The whole app. Open source under GPL v3 or later.</p></div><ul class="included" aria-label="Included for everyone"><li><svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>Linked resizing</li><li><svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>Adaptive tiling</li><li><svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>Drag snapping</li><li><svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>Saved Layouts</li><li><svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>Tabbed panes</li><li><svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>Layout Wheel</li><li><svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>Repair Layout</li><li><svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>Shortcuts &amp; undo</li></ul></div></article>
-    <article class="tile tile-permission"><span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span><div class="tile-body"><div class="tile-copy"><h3>One permission, explained.</h3><p>Accessibility lets BetterTile move and resize your windows. It is the only macOS permission the app requests.</p></div><div class="settings-pane" aria-hidden="true"><p class="pane-title"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 5-7 7 7 7"/></svg>Privacy &amp; Security</p><div class="pane-group"><div class="pane-row is-on"><span class="sys-icon blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5.5" r="1.9" fill="currentColor" stroke="none"/><path d="M6 9.5h12M12 9.5v5m0 0-3 5.5m3-5.5 3 5.5"/></svg></span><span>Accessibility</span><span class="pane-app"><img src="assets/identity/app-icon-native-dark-128.png" width="18" height="18" alt="">BetterTile</span><i class="switch"></i></div><div class="pane-row"><span class="sys-icon gray"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5.5" width="16" height="11" rx="1.8"/><path d="M9.5 19.5h5"/></svg></span><span>Screen Recording</span><em>Not requested</em></div><div class="pane-row"><span class="sys-icon gray"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="7" width="17" height="10" rx="2"/><path d="M7 10.5h.01M10 10.5h.01M13 10.5h.01M16 10.5h.01M8 13.8h8"/></svg></span><span>Input Monitoring</span><em>Not requested</em></div><div class="pane-row"><span class="sys-icon gray"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="5" width="15" height="14" rx="2.5"/><path d="M4.5 13h15M15.5 16h.01"/></svg></span><span>Full Disk Access</span><em>Not requested</em></div></div></div></div></article>
-    <div class="tile-seam" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Shared edge between panes" aria-valuemin="38" aria-valuemax="66" aria-valuenow="58"><span></span></div>
-    <article class="tile tile-data"><span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span><div class="tile-copy"><h3>Window data stays on your Mac.</h3><p>Update checks contact GitHub and can be turned off. No behavioral tracking. <a href="https://github.com/LMC-Karma/BetterTile/blob/main/SECURITY.md">Read the network disclosure <svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg></a></p></div><div class="ledger"><div class="ledger-group"><h4><svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 6.5h14v9H5ZM3 18.5h18"/></svg>Stays on this Mac</h4><ul><li><svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg><span>Window positions and sizes</span></li><li><svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg><span>Settings and shortcuts</span></li><li><svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg><span>Saved Layouts and App Groups</span></li></ul></div><div class="ledger-group"><h4><svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V5m-4.5 4.5L12 5l4.5 4.5M5 19h14"/></svg>Leaves this Mac</h4><ul><li class="is-out"><svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.5a9.5 9.5 0 0 0-3 18.52c.48.09.65-.2.65-.46v-1.62c-2.64.57-3.2-1.27-3.2-1.27-.43-1.1-1.06-1.4-1.06-1.4-.86-.59.07-.58.07-.58.95.07 1.45.98 1.45.98.85 1.45 2.22 1.03 2.76.79.09-.62.33-1.03.6-1.27-2.11-.24-4.33-1.06-4.33-4.7 0-1.04.37-1.89.98-2.55-.1-.24-.42-1.2.09-2.51 0 0 .8-.26 2.61.97a9 9 0 0 1 4.76 0c1.81-1.23 2.6-.97 2.6-.97.52 1.31.2 2.27.1 2.51.61.66.98 1.51.98 2.55 0 3.65-2.23 4.46-4.35 4.69.34.3.65.88.65 1.77v2.62c0 .26.17.56.66.46A9.5 9.5 0 0 0 12 2.5Z"/></svg><span>Update check to GitHub<small>Every 4 hours by default · Can be turned off</small></span></li><li class="is-none"><svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 12h10"/></svg><span>Analytics and tracking</span><em>None</em></li></ul></div><p class="ledger-note">Update checks send no window data, settings, analytics or crash reports.</p><p class="ledger-note">This website is hosted on GitHub Pages, which keeps its own request logs. The site itself loads no third-party resources.</p></div></article>
+<header class="bar">
+  <div class="bar-inner">
+    <a class="brand" href="#top" aria-label="BetterTile home">
+      <img src="assets/identity/app-icon-native-dark-64.png" width="28" height="28" alt="">
+      <span>BetterTile</span>
+    </a>
+    <nav class="nav" id="site-nav" aria-label="Main">
+      <a href="#linked">Features</a>
+      <a href="#privacy">Privacy</a>
+      <a href="#install">Install</a>
+      <a href="#faq">FAQ</a>
+      <a href="https://github.com/LMC-Karma/BetterTile">GitHub</a>
+    </nav>
+    <a class="btn btn-quiet" href="https://github.com/LMC-Karma/BetterTile/releases/latest" data-download>Download</a>
+    <button class="menu-btn" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Menu" hidden>
+      <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path d="M3 7h14M3 13h14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+    </button>
   </div>
-  <p class="fine tiles-hint"><svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h18M7 8l-4 4 4 4m10-8 4 4-4 4"/></svg> Drag the blue handle. Both sides resize together, just like in BetterTile.</p></section>
+</header>
 
-<section class="comparison-section wrap section" aria-labelledby="comparison-title"><div class="section-heading"><div><h2 id="comparison-title">Different ways<br><span>to make space.</span></h2></div><p>There are good tools in this category. Choose the interaction that suits your work.</p></div><p class="fine compare-swipe">Swipe to compare all four apps.</p><div class="compare-table" role="region" aria-labelledby="comparison-title" tabindex="0"><table><caption class="sr-only">Window manager comparison. Sources checked 22 November 2026.</caption><thead><tr><th scope="col" class="feature-col"><span class="compare-legend"><span><span class="check" aria-hidden="true"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg></span>Documented by the developer</span><span><i class="dash" aria-hidden="true">—</i>Not listed on the pages checked</span></span></th><th scope="col" class="app-col is-ours"><span class="app-name">BetterTile</span><span class="app-price">Free · Open source · Public beta</span></th><th scope="col" class="app-col"><span class="app-name">Rectangle Pro</span><span class="app-price">Free trial, then purchase</span></th><th scope="col" class="app-col"><span class="app-name">Moom</span><span class="app-price">Free trial, then purchase</span></th><th scope="col" class="app-col"><span class="app-name">AeroSpace</span><span class="app-price">Open source · MIT</span></th></tr></thead><tbody><tr><th scope="row">Resize neighbours together<small>Move one edge and the next window follows.</small></th><td class="is-ours"><span class="check" aria-hidden="true"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg></span><span class="cell-note">Drag the shared edge</span></td><td><span class="check" aria-hidden="true"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg></span><span class="cell-note">After release</span></td><td><i class="dash" aria-hidden="true">—</i><span class="sr-only">Not listed on the pages checked</span></td><td><span class="check" aria-hidden="true"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg></span><span class="cell-note">Resize commands</span></td></tr><tr><th scope="row">Tile new windows automatically<small>Room is made as windows open.</small></th><td class="is-ours"><span class="check" aria-hidden="true"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg></span><span class="cell-note">Adaptive tiling</span></td><td><span class="check" aria-hidden="true"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg></span><span class="cell-note">Layout triggers</span></td><td><i class="dash" aria-hidden="true">—</i><span class="sr-only">Not listed on the pages checked</span></td><td><span class="check" aria-hidden="true"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg></span><span class="cell-note">Tree tiling</span></td></tr><tr><th scope="row">Drag to snap<small>Edges, corners and custom zones.</small></th><td class="is-ours"><span class="check" aria-hidden="true"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg></span><span class="sr-only">Yes</span></td><td><span class="check" aria-hidden="true"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg></span><span class="sr-only">Yes</span></td><td><span class="check" aria-hidden="true"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg></span><span class="cell-note">Snap zones</span></td><td><i class="dash" aria-hidden="true">—</i><span class="sr-only">Not listed on the pages checked</span></td></tr><tr><th scope="row">Keyboard shortcuts<small>Place windows without the pointer.</small></th><td class="is-ours"><span class="check" aria-hidden="true"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg></span><span class="sr-only">Yes</span></td><td><span class="check" aria-hidden="true"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg></span><span class="sr-only">Yes</span></td><td><span class="check" aria-hidden="true"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg></span><span class="sr-only">Yes</span></td><td><span class="check" aria-hidden="true"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg></span><span class="cell-note">Keyboard and CLI</span></td></tr><tr><th scope="row">Pointer menu<small>Choose a placement where the pointer is.</small></th><td class="is-ours"><span class="check" aria-hidden="true"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg></span><span class="cell-note">Layout Wheel</span></td><td><span class="check" aria-hidden="true"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg></span><span class="cell-note">Snap panel</span></td><td><span class="check" aria-hidden="true"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg></span><span class="cell-note">Pop-up palette</span></td><td><i class="dash" aria-hidden="true">—</i><span class="sr-only">Not listed on the pages checked</span></td></tr><tr><th scope="row">Saved layouts<small>Store an arrangement and apply it later.</small></th><td class="is-ours"><span class="check" aria-hidden="true"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg></span><span class="cell-note">Saved Layouts</span></td><td><span class="check" aria-hidden="true"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg></span><span class="sr-only">Yes</span></td><td><span class="check" aria-hidden="true"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg></span><span class="cell-note">Saved arrangements</span></td><td><i class="dash" aria-hidden="true">—</i><span class="sr-only">Not listed on the pages checked</span></td></tr><tr><th scope="row">Open source<small>Read and build the code yourself.</small></th><td class="is-ours"><span class="check" aria-hidden="true"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg></span><span class="cell-note">GPL v3 or later</span></td><td><i class="dash" aria-hidden="true">—</i><span class="sr-only">Not listed on the pages checked</span></td><td><i class="dash" aria-hidden="true">—</i><span class="sr-only">Not listed on the pages checked</span></td><td><span class="check" aria-hidden="true"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg></span><span class="cell-note">MIT</span></td></tr><tr><th scope="row">Requires</th><td class="is-ours"><span class="cell-text">macOS 26 · Apple silicon</span></td><td><span class="cell-text">macOS 13.5</span></td><td><span class="cell-text">macOS 10.13</span></td><td><span class="cell-text">macOS 13</span></td></tr><tr class="fit-row"><th scope="row">A good fit for</th><td class="is-ours">Direct shared-boundary control, Adaptive tiling, Tabbed panes and Saved Layouts.</td><td>Custom placement commands and saved workspaces, including automatic layout triggers.</td><td>Reusable arrangements and a configurable window-control palette.</td><td>Keyboard and CLI tiling with plain-text configuration and virtual workspaces.</td></tr><tr class="source-row"><th scope="row">Sources</th><td class="is-ours"><div class="table-sources"><a href="https://github.com/LMC-Karma/BetterTile/blob/main/README.md">Source <svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg></a> <a href="https://github.com/LMC-Karma/BetterTile/blob/main/SECURITY.md">Beta &amp; privacy details <svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg></a></div></td><td><div class="table-sources"><a href="https://rectangleapp.com/pro/docs/general/">Source <svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg></a> <a href="https://rectangleapp.com/pro/docs/layouts/">Saved layouts <svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg></a></div></td><td><div class="table-sources"><a href="https://manytricks.com/moom/help/customactions.html">Source <svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg></a> <a href="https://manytricks.com/moom/">Product page <svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg></a></div></td><td><div class="table-sources"><a href="https://nikitabobko.github.io/AeroSpace/commands#resize">Source <svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg></a> <a href="https://github.com/nikitabobko/AeroSpace">Source &amp; workflow <svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg></a></div></td></tr></tbody></table></div><p class="fine comparison-note">Sources checked 22 November 2026, from each developer’s own pages. A dash means the feature was not listed on the pages we read. It is not a claim that the feature is missing. Prices change, so see each product page. <a href="https://rectangleapp.com/">Free Rectangle</a> and <a href="https://github.com/MrKai77/Loop">Loop</a> also offer free placement tools.</p></section>
+<main id="main">
+  <section class="hero" id="top" aria-labelledby="hero-title">
+    <div class="field" aria-hidden="true">
+      <svg class="hero-panes" viewBox="0 0 720 560" focusable="false">
+        <g fill="#0a1666" fill-opacity=".16" stroke="#fff" stroke-opacity=".34">
+          <rect x="40" y="-40" width="300" height="230" rx="12"/>
+          <rect x="354" y="-40" width="420" height="150" rx="12"/>
+          <rect x="354" y="124" width="190" height="260" rx="12"/>
+          <rect x="40" y="204" width="300" height="180" rx="12"/>
+          <rect x="558" y="124" width="216" height="260" rx="12" fill="#bcd0ff" fill-opacity=".2" stroke-opacity=".7"/>
+        </g>
+      </svg>
+    </div>
+    <div class="wrap hero-copy">
+      <h1 id="hero-title">Your windows.<span>Working together.</span></h1>
+      <div class="hero-foot">
+        <p class="lede">A free window manager for macOS. Drag the edge between two windows and both resize together.</p>
+        <div class="action">
+          <a class="btn btn-primary" href="https://github.com/LMC-Karma/BetterTile/releases/latest" data-download>
+            <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M10 3v10m0 0-4-4m4 4 4-4M4 16h12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Download for Mac
+          </a>
+          <p class="req"><span class="req-key">Apple silicon Mac · macOS 26 or later</span> <span>Free and open source · Public beta</span></p>
+        </div>
+      </div>
+    </div>
+    <div class="wrap">
+      <figure class="media media-hero media-tour" id="tour" data-play="manual">
+        <div class="tour-stage" id="overview">
+          <div class="media-mat">
+            <div class="media-frame">
+              <video controls muted playsinline preload="none" poster="assets/media/overview-desktop.jpg" width="1384" height="778" aria-label="A 38-second tour of BetterTile: windows snap into place, resize together and return to a Saved Layout">
+                <source src="assets/media/overview.mp4" type="video/mp4">
+              </video>
+            </div>
+          </div>
+          <button class="play play-tour" type="button" aria-label="Play the 38-second tour" data-label-play="Play the 38-second tour" data-label-pause="Pause the tour" hidden>
+            <span class="play-disc">
+              <svg class="i-pause" viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M7 5v10M13 5v10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+              <svg class="i-play" viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path d="M7 4.8v10.4L15.4 10z" fill="currentColor"/></svg>
+            </span>
+            <span class="play-label" aria-hidden="true">Play the tour <span class="play-time">0:38</span></span>
+          </button>
+        </div>
+      </figure>
+    </div>
+  </section>
 
-<section id="start" class="getting-started wrap section" aria-labelledby="start-title"><div class="section-heading"><div><h2 id="start-title">Make the first move.</h2></div><p>Apple silicon Mac, macOS 26 or later<br>Public beta · Free forever</p></div><ol class="install-steps"><li><div class="step-visual step-install" aria-hidden="true"><span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="step-title">BetterTile</span><div class="install-drag"><figure><img src="assets/identity/app-icon-native-dark-128.png" width="64" height="64" alt=""><figcaption>BetterTile</figcaption></figure><svg class="install-arrow" viewBox="0 0 80 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8h74m-6-6 6 6-6 6" stroke-dasharray="4 5"/></svg><figure><svg class="apps-folder" viewBox="0 0 72 60" aria-hidden="true"><defs><linearGradient id="folder-back" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4f9cf0"/><stop offset="1" stop-color="#2c76d6"/></linearGradient><linearGradient id="folder-front" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#93cbff"/><stop offset="1" stop-color="#5ba5f3"/></linearGradient></defs><path fill="url(#folder-back)" d="M4 9a4 4 0 0 1 4-4h17.3a4 4 0 0 1 3 1.35L31.6 10H64a4 4 0 0 1 4 4v38a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4Z"/><path fill="url(#folder-front)" d="M4 18.5a4 4 0 0 1 4-4h56a4 4 0 0 1 4 4V52a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4Z"/><path fill="#fff" fill-opacity=".38" d="M8 14.5h56a4 4 0 0 1 4 4v.8H4v-.8a4 4 0 0 1 4-4Z"/><g fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="3.4"><path stroke="#fff" stroke-opacity=".35" d="M28 47.2 36 27.2l8 20M31 40.7h10"/><path stroke="#2a6cc2" stroke-opacity=".8" d="M28 46 36 26l8 20M31 39.5h10"/></g><g transform="translate(6 40)"><rect width="13" height="13" rx="3.2" fill="#fff"/><path d="M4 9.6c0-3 1.4-4.6 4.6-4.6M6.6 3l2.4 2-2.4 2.2" fill="none" stroke="#1d2533" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></g></svg><figcaption>Applications</figcaption></figure></div></div><span class="step-number">1</span><h3>Download the beta.</h3><p>Get the disk image from the official GitHub release. Open it and drag BetterTile into Applications.</p><a href="https://github.com/LMC-Karma/BetterTile/releases/latest" class="text-link">Download the disk image <svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v16m-6-6 6 6 6-6"/></svg></a></li><li><div class="step-visual step-allow" aria-hidden="true"><span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="step-title">Privacy &amp; Security</span><div class="settings-mini"><div class="settings-side"><i></i><i></i><i class="sel"><span class="sys-icon blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 12.5V6.8a1.3 1.3 0 0 1 2.6 0V11m0-4.9V5.2a1.3 1.3 0 0 1 2.6 0V11m0-4.4a1.3 1.3 0 0 1 2.6 0V12m0-3.2a1.3 1.3 0 0 1 2.6 0v5.4A6.3 6.3 0 0 1 12.6 20.5h-.4a6 6 0 0 1-4.7-2.3l-2.6-3.3a1.4 1.4 0 0 1 2.1-1.8l1.5 1.5"/></svg></span><span>Privacy &amp; Security</span></i><i></i></div><div class="settings-main"><b>Security</b><p>“BetterTile” was blocked to protect your Mac.</p><span class="mock-button">Open Anyway</span></div></div></div><span class="step-number">2</span><h3>Allow the first launch.</h3><p>The beta is self-signed, without Apple Developer ID or notarization. After the first launch attempt, confirm the source, then choose <b>Open Anyway</b> in System Settings → Privacy &amp; Security.</p></li><li><div class="step-visual step-room" aria-hidden="true"><span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="step-title">Desktop</span><div class="mini-desk is-step"><div class="mini-win "><span class="mini-bar"><i></i><i></i><i></i></span><b></b><b></b><b class="short"></b></div><div class="mini-win "><span class="mini-bar"><i></i><i></i><i></i></span><b></b><b class="short"></b></div><div class="mini-win tall"><span class="mini-bar"><i></i><i></i><i></i></span><b class="accent"></b><b></b><b></b><b></b><b></b><b class="short"></b></div></div></div><span class="step-number">3</span><h3>Give your windows room.</h3><p>Follow the app’s explanation to grant Accessibility permission. Choose your layout and enable the controls you want.</p><a href="https://github.com/LMC-Karma/BetterTile#install" class="text-link">Full installation guide <svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg></a></li></ol><div class="release-strip"><h3>Release notes</h3><a href="https://github.com/LMC-Karma/BetterTile/releases/latest" class="text-link">What’s new in the latest release <svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg></a></div></section>
+  <section class="section linked" id="linked" aria-labelledby="linked-title">
+    <div class="wrap feature-row feature-row-flip">
+      <figure class="media media-lead" id="demo">
+        <div class="media-frame">
+          <video controls muted playsinline loop preload="none" poster="assets/media/resize.jpg" width="1920" height="1080" aria-label="Linked resizing: dragging the boundary between a browser and a terminal resizes both">
+            <source src="assets/media/resize.mp4" type="video/mp4">
+          </video>
+          <button class="play" type="button" aria-label="Play video" hidden>
+            <svg class="i-pause" viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M7 5v10M13 5v10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+            <svg class="i-play" viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M7 4.8v10.4L15.4 10z" fill="currentColor"/></svg>
+          </button>
+        </div>
+      </figure>
+      <div class="feature-copy">
+        <h2 id="linked-title">Linked resizing.<span>Both windows&nbsp;follow.</span></h2>
+        <p>Drag the edge two windows share. One gets more room, its neighbour gives it up, and both sides stay&nbsp;aligned.</p>
+        <div class="modes">
+          <div class="mode">
+            <h3>Live Resize</h3>
+            <p>Every change applies as you&nbsp;move.</p>
+          </div>
+          <div class="mode">
+            <h3>Resize Preview</h3>
+            <p>The new frames show during the drag and apply when you&nbsp;release.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
 
-<section class="faq-section wrap section" aria-labelledby="faq-title"><div class="faq-aside"><h2 id="faq-title">A few<br><span>good questions.</span></h2><div class="tile faq-help"><span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span><h3>Still curious?</h3><p>Read the guide, or ask on GitHub. Feature ideas and bug reports are welcome.</p><div><a href="https://github.com/LMC-Karma/BetterTile/blob/main/README.md" class="text-link">Read the docs <svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg></a><a href="https://github.com/LMC-Karma/BetterTile/issues" class="text-link">Open an issue <svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg></a></div></div></div><div class="faq-list"><details><summary>Which Macs can run it?<span class="faq-indicator" aria-hidden="true"><svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M12 5v14"/></svg></span></summary><p>BetterTile requires an Apple silicon Mac with macOS 26 or later. Intel Macs stay on 0.5.2 and are not offered this update. Accessibility is the only macOS permission BetterTile requests. Check the latest release notes before installing a new version.</p></details><details><summary>Why does it need Accessibility?<span class="faq-indicator" aria-hidden="true"><svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M12 5v14"/></svg></span></summary><p>Accessibility lets BetterTile read window frames, then move and resize eligible windows. The app explains the permission before requesting it.</p></details><details><summary>Is it really free?<span class="faq-indicator" aria-hidden="true"><svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M12 5v14"/></svg></span></summary><p>Yes. BetterTile is free forever and open source under GPL v3 or later. There is no paid tier, trial expiry, subscription, advertising, behavioral tracking, or sale of user data.</p></details><details><summary>Does the app use the internet?<span class="faq-indicator" aria-hidden="true"><svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M12 5v14"/></svg></span></summary><p>Window and configuration data stay on your Mac. Update checks and downloads contact GitHub, which receives ordinary connection metadata. Automatic update checks run every four hours by default and can be disabled. Send Feedback opens a GitHub form with the app version and build in its suggested title; it submits no issue automatically. <a href="https://github.com/LMC-Karma/BetterTile/blob/main/SECURITY.md">Security and privacy <svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg></a></p></details><details><summary>How do updates work?<span class="faq-indicator" aria-hidden="true"><svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M12 5v14"/></svg></span></summary><p>BetterTile shows release notes and asks before downloading or installing. Sparkle verifies an EdDSA signature on each update. This is separate from the beta’s self-signed macOS code signature. You can also use Check for Updates from the app.</p></details><details><summary>What are the current limits?<span class="faq-indicator" aria-hidden="true"><svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M12 5v14"/></svg></span></summary><p>Turn off Stage Manager before using Tabbed. Pane assignments, followed Saved Layouts and Undo history last only for the current app session. Cross-display tab dragging remains unavailable. BetterTile does not move windows between macOS desktops. Some apps refuse requested window sizes. <a href="https://github.com/LMC-Karma/BetterTile/releases/latest">Full beta limitations <svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg></a></p></details><details><summary>Can I keep using macOS tiling?<span class="faq-indicator" aria-hidden="true"><svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M12 5v14"/></svg></span></summary><p>BetterTile can work with windows arranged by macOS tiling. For dragging to screen edges, use either BetterTile Drag Snapping or macOS edge tiling to avoid competing previews.</p></details></div></section>
+  <section class="section" id="adaptive" aria-labelledby="adaptive-title">
+    <div class="wrap feature-row" id="bento">
+      <div class="feature-copy">
+        <h2 id="adaptive-title">Adaptive tiling.<span>Grows as you work.</span></h2>
+        <p>Open a new window and the layout makes room. It chooses the split that keeps movement and resizing to a&nbsp;minimum.</p>
+        <p class="dim">When an app stops responding and comes back, its windows rejoin the&nbsp;layout.</p>
+      </div>
+      <figure class="media">
+          <div class="media-frame">
+            <video controls muted playsinline loop preload="none" poster="assets/media/bento.jpg" width="1920" height="1080" aria-label="Adaptive tiling: a new window joins the layout and the others make room">
+              <source src="assets/media/bento.mp4" type="video/mp4">
+            </video>
+            <button class="play" type="button" aria-label="Play video" hidden>
+            <svg class="i-pause" viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M7 5v10M13 5v10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+            <svg class="i-play" viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M7 4.8v10.4L15.4 10z" fill="currentColor"/></svg>
+          </button>
+          </div>
+        </figure>
+    </div>
+  </section>
 
-<section class="closing wrap section" aria-labelledby="closing-title"><svg class="closing-panes" viewBox="0 0 1300 640" preserveAspectRatio="xMidYMid slice" aria-hidden="true"><rect x="0.5" y="0.5" width="249" height="299" rx="10"/><rect x="0.5" y="312.5" width="249" height="327" rx="10" class="cobalt"/><rect x="262.5" y="0.5" width="157" height="199" rx="10"/><rect x="262.5" y="212.5" width="157" height="427" rx="10"/><rect x="432.5" y="0.5" width="435" height="83" rx="10"/><rect x="432.5" y="556.5" width="435" height="83" rx="10"/><rect x="880.5" y="0.5" width="157" height="419" rx="10" class="cobalt"/><rect x="880.5" y="432.5" width="157" height="207" rx="10"/><rect x="1050.5" y="0.5" width="249" height="359" rx="10" class="teal"/><rect x="1050.5" y="372.5" width="249" height="267" rx="10"/><rect class="closing-grip" x="1041" y="252" width="6" height="136" rx="3"/></svg><div class="closing-mark"><img src="assets/identity/app-icon-native-dark-256.png" width="100" height="100" alt=""></div><h2 id="closing-title">Your windows.<br><span>Working together.</span></h2><a href="https://github.com/LMC-Karma/BetterTile/releases/latest" class="button primary">Download for Mac <svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v16m-6-6 6 6 6-6"/></svg></a><p class="fine closing-trust"><b>Apple silicon Mac, macOS 26 or later.</b> Free and open source.</p><p class="fine">Public beta · Latest disk image from GitHub. Self-signed beta: <a href="https://github.com/LMC-Karma/BetterTile#install">first-install instructions <svg class="ui-icon " viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg></a></p></section>
-</main><footer class="site-footer wrap"><div class="footer-brand"><a class="wordmark" href="./"><img src="assets/identity/app-icon-native-dark-128.png" width="40" height="40" alt=""><span>BetterTile</span></a><p>A free, open-source window manager for macOS.</p><p class="fine">Public beta</p></div><nav class="footer-cols" aria-label="Footer navigation"><div><h3>Get BetterTile</h3><a href="https://github.com/LMC-Karma/BetterTile/releases/latest">Download for Mac</a><a href="https://github.com/LMC-Karma/BetterTile#install">Installation guide</a><a href="https://github.com/LMC-Karma/BetterTile/releases">Release notes</a></div><div><h3>Project</h3><a href="https://github.com/LMC-Karma/BetterTile">Source code</a><a href="https://github.com/LMC-Karma/BetterTile/issues">Report an issue</a><a href="https://github.com/LMC-Karma/BetterTile/blob/main/LICENSE">License</a></div><div><h3>Trust</h3><a href="https://github.com/LMC-Karma/BetterTile/blob/main/SECURITY.md">Privacy & security</a><a href="https://github.com/LMC-Karma/BetterTile/blob/main/README.md">Documentation</a><a href="acknowledgements.html">Acknowledgements</a></div></nav><p class="footer-note">Made for the work in front of you. BetterTile is not affiliated with Apple. Mac and macOS are trademarks of Apple Inc.</p></footer>
-</body></html>
+  <section class="section" id="features" aria-labelledby="features-title">
+    <div class="wrap">
+      <div class="split-head">
+        <h2 id="features-title">Every other way<br>to place a window.</h2>
+        <p class="split-copy">Drag it to an edge, press a shortcut, or pick it from a wheel. Then bring back a whole desktop in one&nbsp;step.</p>
+      </div>
+
+      <div class="grid">
+        <article class="item" id="snapping">
+          <figure class="media">
+          <div class="media-frame">
+            <video controls muted playsinline loop preload="none" poster="assets/media/snap.jpg" width="1920" height="1080" aria-label="Drag snapping: a window snaps to a corner">
+              <source src="assets/media/snap.mp4" type="video/mp4">
+            </video>
+            <button class="play" type="button" aria-label="Play video" hidden>
+            <svg class="i-pause" viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M7 5v10M13 5v10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+            <svg class="i-play" viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M7 4.8v10.4L15.4 10z" fill="currentColor"/></svg>
+          </button>
+          </div>
+        </figure>
+          <h3>Drag snapping</h3>
+          <p>Drag a title bar toward an edge or corner. See the placement, then release to snap. Adjust the Snap Zones in Settings.</p>
+        </article>
+
+        <article class="item" id="keyboard">
+          <figure class="media">
+          <div class="media-frame">
+            <video controls muted playsinline loop preload="none" poster="assets/media/keyboard.jpg" width="1920" height="1080" aria-label="Keyboard shortcuts: windows move with a key press, then a placement is undone">
+              <source src="assets/media/keyboard.mp4" type="video/mp4">
+            </video>
+            <button class="play" type="button" aria-label="Play video" hidden>
+            <svg class="i-pause" viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M7 5v10M13 5v10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+            <svg class="i-play" viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M7 4.8v10.4L15.4 10z" fill="currentColor"/></svg>
+          </button>
+          </div>
+        </figure>
+          <h3>Keyboard shortcuts and undo</h3>
+          <p>Place windows with global shortcuts, and undo a placement to try&nbsp;another.</p>
+        </article>
+
+        <article class="item" id="wheel">
+          <figure class="media">
+          <div class="media-frame">
+            <video controls muted playsinline loop preload="none" poster="assets/media/wheel.jpg" width="1920" height="1080" aria-label="Layout Wheel: a ring of placements opens at the pointer">
+              <source src="assets/media/wheel.mp4" type="video/mp4">
+            </video>
+            <button class="play" type="button" aria-label="Play video" hidden>
+            <svg class="i-pause" viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M7 5v10M13 5v10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+            <svg class="i-play" viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M7 4.8v10.4L15.4 10z" fill="currentColor"/></svg>
+          </button>
+          </div>
+        </figure>
+          <h3>Layout Wheel</h3>
+          <p>Hold <kbd>⌃</kbd> <kbd>⌥</kbd> <kbd>⇧</kbd>, choose a sector, and release. Escape or the center cancels. Build a Custom wheel with one or two&nbsp;levels.</p>
+        </article>
+
+        <article class="item" id="wheel-grouped">
+          <figure class="media">
+          <div class="media-frame">
+            <video controls muted playsinline loop preload="none" poster="assets/media/wheel-grouped.jpg" width="1920" height="1080" aria-label="Layout Wheel, Grouped style: each group opens its own fan of commands">
+              <source src="assets/media/wheel-grouped.mp4" type="video/mp4">
+            </video>
+            <button class="play" type="button" aria-label="Play video" hidden>
+            <svg class="i-pause" viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M7 5v10M13 5v10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+            <svg class="i-play" viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M7 4.8v10.4L15.4 10z" fill="currentColor"/></svg>
+          </button>
+          </div>
+        </figure>
+          <h3>Grouped Layout Wheel</h3>
+          <p>Choose a group at the pointer, then flick to a&nbsp;command.</p>
+        </article>
+
+        <article class="item item-wide" id="saved-layouts">
+          <figure class="media">
+          <div class="media-frame">
+            <video controls muted playsinline loop preload="none" poster="assets/media/saved-layouts.jpg" width="1920" height="1080" aria-label="Saved Layouts: a saved arrangement is applied to the desktop">
+              <source src="assets/media/saved-layouts.mp4" type="video/mp4">
+            </video>
+            <button class="play" type="button" aria-label="Play video" hidden>
+            <svg class="i-pause" viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M7 5v10M13 5v10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+            <svg class="i-play" viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M7 4.8v10.4L15.4 10z" fill="currentColor"/></svg>
+          </button>
+          </div>
+        </figure>
+          <div class="item-copy">
+            <h3>Saved Layouts</h3>
+            <p>Save a desktop’s arrangement and apply it later from the menu bar, the Layout Wheel or its own shortcut. Bind a layout to a set of displays, and BetterTile applies it when they&nbsp;connect.</p>
+            <p class="dim">Apply never opens an app or takes a window from another desktop. Undo Apply puts the windows&nbsp;back.</p>
+          </div>
+        </article>
+
+        <article class="item" id="tabbed">
+          <figure class="media">
+          <div class="media-frame">
+            <video controls muted playsinline loop preload="none" poster="assets/media/tabbed.jpg" width="1920" height="1080" aria-label="Tabbed: windows grouped as tabs in resizable panes">
+              <source src="assets/media/tabbed.mp4" type="video/mp4">
+            </video>
+            <button class="play" type="button" aria-label="Play video" hidden>
+            <svg class="i-pause" viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M7 5v10M13 5v10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+            <svg class="i-play" viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M7 4.8v10.4L15.4 10z" fill="currentColor"/></svg>
+          </button>
+          </div>
+        </figure>
+          <h3>Tabbed</h3>
+          <p>Group windows in resizable panes. Select a tab to bring its window forward. Drag tabs between panes, or drop a floating window into a pane as a&nbsp;tab.</p>
+        </article>
+
+        <article class="item" id="gallery">
+          <figure class="media">
+          <div class="media-frame">
+            <video controls muted playsinline loop preload="none" poster="assets/media/layout-gallery.jpg" width="1920" height="1080" aria-label="Layout Gallery: a picture of each Tabbed layout">
+              <source src="assets/media/layout-gallery.mp4" type="video/mp4">
+            </video>
+            <button class="play" type="button" aria-label="Play video" hidden>
+            <svg class="i-pause" viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M7 5v10M13 5v10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+            <svg class="i-play" viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M7 4.8v10.4L15.4 10z" fill="currentColor"/></svg>
+          </button>
+          </div>
+        </figure>
+          <h3>Layout Gallery</h3>
+          <p>Choose a Tabbed layout from a picture of its panes. Every pane keeps its&nbsp;tabs.</p>
+        </article>
+
+        <article class="item" id="repair">
+          <figure class="media" id="more">
+          <div class="media-frame">
+            <video controls muted playsinline loop preload="none" poster="assets/media/repair-layout.jpg" width="1920" height="1080" aria-label="Repair Layout: a desktop's layout is rebuilt from its visible windows">
+              <source src="assets/media/repair-layout.mp4" type="video/mp4">
+            </video>
+            <button class="play" type="button" aria-label="Play video" hidden>
+            <svg class="i-pause" viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M7 5v10M13 5v10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+            <svg class="i-play" viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M7 4.8v10.4L15.4 10z" fill="currentColor"/></svg>
+          </button>
+          </div>
+        </figure>
+          <h3>Repair Layout</h3>
+          <p>Rebuild a desktop’s layout from its visible windows. Adaptive panes return to equal&nbsp;shares.</p>
+        </article>
+
+        <article class="item" id="displays">
+          <figure class="media">
+          <div class="media-frame">
+            <video controls muted playsinline loop preload="none" poster="assets/media/multi-display.jpg" width="1920" height="1080" aria-label="Multiple displays: a window moves to the next display">
+              <source src="assets/media/multi-display.mp4" type="video/mp4">
+            </video>
+            <button class="play" type="button" aria-label="Play video" hidden>
+            <svg class="i-pause" viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M7 5v10M13 5v10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+            <svg class="i-play" viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M7 4.8v10.4L15.4 10z" fill="currentColor"/></svg>
+          </button>
+          </div>
+        </figure>
+          <h3>Multiple displays</h3>
+          <p>Next Display and Previous Display make room on the destination and close the gap on the&nbsp;source.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="privacy" aria-labelledby="privacy-title">
+    <div class="wrap privacy-row">
+      <div class="privacy-copy">
+        <h2 id="privacy-title">Free forever.<span>Nothing to sell.</span></h2>
+        <p>BetterTile is open source under GPL v3 or later. There is no paid tier, subscription, advertising, behavioral tracking or sale of user&nbsp;data.</p>
+        <p class="links">
+          <a class="link" href="https://github.com/LMC-Karma/BetterTile">Explore the source <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M5 11 11 5M6 5h5v5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+          <a class="link" href="https://github.com/LMC-Karma/BetterTile/blob/main/docs/SECURITY_DISCLOSURES.md">Read the network disclosure <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M5 11 11 5M6 5h5v5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+        </p>
+      </div>
+      <div class="ledger">
+        <dl>
+          <div>
+            <dt>Permissions</dt>
+            <dd>
+              <ul class="perms" aria-label="macOS permissions">
+                <li class="perm-on"><span class="signal">Accessibility</span><span class="perm-state">Requested</span><span class="perm-why">Moves and resizes your windows. The app explains it before macOS&nbsp;asks.</span></li>
+                <li class="perm-off"><span>Screen Recording</span><span>Not requested</span></li>
+                <li class="perm-off"><span>Input Monitoring</span><span>Not requested</span></li>
+                <li class="perm-off"><span>Full Disk Access</span><span>Not requested</span></li>
+              </ul>
+            </dd>
+          </div>
+          <div><dt>Stays on your Mac</dt><dd>Window positions and sizes, settings and shortcuts, Saved Layouts and App&nbsp;Groups.</dd></div>
+          <div><dt>Leaves your Mac</dt><dd>An update check to GitHub, every 4 hours by default. You can turn it&nbsp;off.</dd></div>
+          <div><dt>Tracking</dt><dd><span class="signal">None</span></dd></div>
+        </dl>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="install" aria-labelledby="install-title">
+    <div class="wrap">
+      <div class="split-head split-quiet">
+        <h2 id="install-title" class="h-quiet">Install the beta</h2>
+        <p class="split-copy">The beta is self-signed, without Apple notarization, so macOS asks you to confirm the first launch. It takes one extra step.</p>
+      </div>
+      <ol class="steps">
+        <li>
+          <h3>Download</h3>
+          <p>Get the disk image from the <a class="inline-link" href="https://github.com/LMC-Karma/BetterTile/releases/latest">latest GitHub release</a>.</p>
+        </li>
+        <li>
+          <h3>Drag to Applications</h3>
+          <p>Open the disk image and drag BetterTile into your Applications&nbsp;folder.</p>
+        </li>
+        <li id="open-anyway">
+          <h3>Open Anyway</h3>
+          <p>Try to open BetterTile once. Then go to System Settings → Privacy &amp; Security and choose Open&nbsp;Anyway.</p>
+          <div class="sys-card" aria-hidden="true">
+            <div class="sys-title"><span class="sys-lights"><i></i><i></i><i></i></span>Privacy &amp; Security</div>
+            <div class="sys-body">
+              <p class="sys-group">Security</p>
+              <div class="sys-panel">
+                <p>“BetterTile” was blocked to protect your&nbsp;Mac.</p>
+                <span class="sys-btn">Open Anyway</span>
+              </div>
+            </div>
+          </div>
+        </li>
+        <li>
+          <h3>Allow Accessibility</h3>
+          <p>Follow the app’s explanation to grant Accessibility. Then choose your layout and the controls you&nbsp;want.</p>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="section" id="faq" aria-labelledby="faq-title">
+    <div class="wrap faq">
+      <div class="faq-head">
+        <h2 id="faq-title" class="h-quiet">Questions</h2>
+        <p>Feature ideas and bug reports are welcome on&nbsp;GitHub.</p>
+        <p class="links">
+          <a class="link" href="https://github.com/LMC-Karma/BetterTile/blob/main/README.md">Read the docs <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M5 11 11 5M6 5h5v5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+          <a class="link" href="https://github.com/LMC-Karma/BetterTile/issues">Open an issue <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M5 11 11 5M6 5h5v5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+        </p>
+      </div>
+      <div class="faq-list">
+        <details>
+          <summary>Which Macs can run it?</summary>
+          <p>BetterTile needs an Apple silicon Mac with macOS 26 or later.</p>
+        </details>
+        <details>
+          <summary>Why does it need Accessibility?</summary>
+          <p>Accessibility lets BetterTile read window frames, then move and resize eligible windows. The app explains the permission before it asks for it.</p>
+        </details>
+        <details>
+          <summary>Is it really free?</summary>
+          <p>Yes. BetterTile is free forever and open source under GPL v3 or later. There is no paid tier, trial expiry, subscription, advertising, behavioral tracking or sale of user&nbsp;data.</p>
+        </details>
+        <details>
+          <summary>Does the app use the internet?</summary>
+          <p>Window and configuration data stay on your Mac. Update checks and downloads contact GitHub, which receives ordinary connection metadata. Automatic checks run every four hours by default and can be turned off. Send Feedback opens a GitHub form; it submits nothing by itself.</p>
+        </details>
+        <details>
+          <summary>How do updates work?</summary>
+          <p>BetterTile shows the release notes and asks before it downloads or installs anything. Sparkle verifies an EdDSA signature on each update. This is separate from the beta’s self-signed macOS code signature.</p>
+        </details>
+        <details>
+          <summary>What are the current limits?</summary>
+          <p>Turn off Stage Manager before you use Tabbed. Pane assignments, followed Saved Layouts and Undo history last only for the current app session. Tabs cannot yet be dragged between displays. BetterTile does not move windows between macOS desktops. Some apps refuse requested window sizes.</p>
+        </details>
+        <details>
+          <summary>Can I keep using macOS tiling?</summary>
+          <p>Yes. BetterTile works with windows that macOS tiling arranged. For dragging to screen edges, use either BetterTile Drag Snapping or macOS edge tiling, so the two previews do not compete.</p>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <section class="closing" aria-labelledby="closing-title">
+    <div class="field" aria-hidden="true">
+<svg class="panes panes-wide" viewBox="0 0 1440 760" preserveAspectRatio="xMidYMid meet" focusable="false">
+<defs>
+<linearGradient id="fw-pf" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0a1666" stop-opacity=".08"/><stop offset=".5" stop-color="#0a1666" stop-opacity=".16"/><stop offset="1" stop-color="#0a1666" stop-opacity=".26"/></linearGradient>
+<linearGradient id="fw-ps" x1="0" y1="0" x2=".35" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".62"/><stop offset=".4" stop-color="#e4ecff" stop-opacity=".30"/><stop offset="1" stop-color="#e4ecff" stop-opacity=".16"/></linearGradient>
+<linearGradient id="fw-cf" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#bcd0ff" stop-opacity=".46"/><stop offset=".55" stop-color="#8fb0ff" stop-opacity=".16"/><stop offset="1" stop-color="#6f93ff" stop-opacity=".06"/></linearGradient>
+<linearGradient id="fw-cs" x1="0" y1="0" x2=".35" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".95"/><stop offset="1" stop-color="#d6e2ff" stop-opacity=".34"/></linearGradient>
+<linearGradient id="fw-tf" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5ff2d2" stop-opacity=".62"/><stop offset=".55" stop-color="#2fd6b4" stop-opacity=".26"/><stop offset="1" stop-color="#2cc9ad" stop-opacity=".06"/></linearGradient>
+<linearGradient id="fw-ts" x1="0" y1="0" x2=".35" y2="1"><stop offset="0" stop-color="#effffa" stop-opacity=".95"/><stop offset="1" stop-color="#9ff3df" stop-opacity=".34"/></linearGradient>
+<linearGradient id="fw-grip" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#b4dcff"/></linearGradient>
+<linearGradient id="fw-edge" gradientUnits="userSpaceOnUse" x1="0" y1="20" x2="0" y2="420"><stop offset="0" stop-color="#cfe8ff" stop-opacity="0"/><stop offset=".5" stop-color="#e8f4ff" stop-opacity=".95"/><stop offset="1" stop-color="#cfe8ff" stop-opacity="0"/></linearGradient>
+<filter id="fw-soft" filterUnits="userSpaceOnUse" x="-600" y="-500" width="2640" height="1760"><feGaussianBlur stdDeviation="10"/></filter>
+<filter id="fw-shade" filterUnits="userSpaceOnUse" x="-600" y="-500" width="2640" height="1760"><feGaussianBlur stdDeviation="4"/></filter>
+<mask id="fw-out" maskUnits="userSpaceOnUse" x="-600" y="-500" width="2640" height="1760"><rect x="-600" y="-500" width="2640" height="1760" fill="#fff"/><g fill="#000"><rect x="-400" y="-300" width="576" height="600" rx="12"/><rect x="190" y="-300" width="126" height="490" rx="12"/><rect x="190" y="204" width="126" height="356" rx="12"/><rect x="190" y="574" width="126" height="486" rx="12"/><rect x="330" y="-300" width="370" height="406" rx="12"/><rect x="714" y="-300" width="396" height="406" rx="12"/><rect x="330" y="654" width="230" height="406" rx="12"/><rect x="574" y="654" width="536" height="406" rx="12"/><rect x="1124" y="434" width="138" height="626" rx="12"/><rect x="1276" y="344" width="564" height="716" rx="12"/><rect x="-400" y="314" width="576" height="746" rx="12"/><rect x="1124" y="-300" width="138" height="720" rx="12"/><rect x="1276" y="-300" width="564" height="630" rx="12"/></g></mask>
+</defs>
+<g mask="url(#fw-out)"><g class="f-shade" fill="#06104a" filter="url(#fw-shade)"><rect x="-400" y="-292" width="576" height="600" rx="12"/><rect x="190" y="-292" width="126" height="490" rx="12"/><rect x="190" y="212" width="126" height="356" rx="12"/><rect x="190" y="582" width="126" height="486" rx="12"/><rect x="330" y="-292" width="370" height="406" rx="12"/><rect x="714" y="-292" width="396" height="406" rx="12"/><rect x="330" y="662" width="230" height="406" rx="12"/><rect x="574" y="662" width="536" height="406" rx="12"/><rect x="1124" y="442" width="138" height="626" rx="12"/><rect x="1276" y="352" width="564" height="716" rx="12"/><rect x="-400" y="322" width="576" height="746" rx="12"/><rect x="1124" y="-292" width="138" height="720" rx="12"/><rect x="1276" y="-292" width="564" height="630" rx="12"/></g></g>
+<g class="f-glow" filter="url(#fw-soft)"><rect x="-400" y="314" width="576" height="746" rx="12" stroke="#c4d6ff"/><rect x="1124" y="-300" width="138" height="720" rx="12" stroke="#c4d6ff"/><rect x="1276" y="-300" width="564" height="630" rx="12" class="g-teal" stroke="#8ff6dd"/></g>
+<g class="f-panes" fill="url(#fw-pf)" stroke="url(#fw-ps)"><rect x="-400" y="-300" width="576" height="600" rx="12"/><rect x="190" y="-300" width="126" height="490" rx="12"/><rect x="190" y="204" width="126" height="356" rx="12"/><rect x="190" y="574" width="126" height="486" rx="12"/><rect x="330" y="-300" width="370" height="406" rx="12"/><rect x="714" y="-300" width="396" height="406" rx="12"/><rect x="330" y="654" width="230" height="406" rx="12"/><rect x="574" y="654" width="536" height="406" rx="12"/><rect x="1124" y="434" width="138" height="626" rx="12"/><rect x="1276" y="344" width="564" height="716" rx="12"/><rect x="-400" y="314" width="576" height="746" rx="12" fill="url(#fw-cf)" stroke="url(#fw-cs)"/><rect x="1124" y="-300" width="138" height="720" rx="12" fill="url(#fw-cf)" stroke="url(#fw-cs)"/><rect x="1276" y="-300" width="564" height="630" rx="12" fill="url(#fw-tf)" stroke="url(#fw-ts)"/></g>
+<g class="f-edge" stroke="url(#fw-edge)"><line x1="1262" y1="20" x2="1262" y2="420"/><line x1="1276" y1="20" x2="1276" y2="330"/></g>
+<rect x="1262" y="146" width="14" height="156" rx="7.0" fill="#8cc8ff" opacity=".9" filter="url(#fw-soft)"/>
+<rect class="f-grip" x="1266" y="152" width="6" height="144" rx="3.0" fill="url(#fw-grip)"/>
+</svg>
+<svg class="panes panes-narrow" viewBox="0 0 390 720" preserveAspectRatio="xMidYMid meet" focusable="false">
+<defs>
+<linearGradient id="fn-pf" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".1"/><stop offset=".45" stop-color="#fff" stop-opacity=".03"/><stop offset="1" stop-color="#0a1466" stop-opacity=".12"/></linearGradient>
+<linearGradient id="fn-ps" x1="0" y1="0" x2=".2" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".72"/><stop offset=".45" stop-color="#e9efff" stop-opacity=".42"/><stop offset="1" stop-color="#e9efff" stop-opacity=".3"/></linearGradient>
+<linearGradient id="fn-cf" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#bcd0ff" stop-opacity=".46"/><stop offset=".55" stop-color="#8fb0ff" stop-opacity=".16"/><stop offset="1" stop-color="#6f93ff" stop-opacity=".06"/></linearGradient>
+<linearGradient id="fn-cs" x1="0" y1="0" x2=".2" y2="1"><stop offset="0" stop-color="#fff" stop-opacity="1"/><stop offset="1" stop-color="#d9e4ff" stop-opacity=".5"/></linearGradient>
+<linearGradient id="fn-tf" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5ff2d2" stop-opacity=".62"/><stop offset=".55" stop-color="#2fd6b4" stop-opacity=".26"/><stop offset="1" stop-color="#2cc9ad" stop-opacity=".06"/></linearGradient>
+<linearGradient id="fn-ts" x1="0" y1="0" x2=".2" y2="1"><stop offset="0" stop-color="#f0fffb" stop-opacity="1"/><stop offset="1" stop-color="#a6f5e2" stop-opacity=".55"/></linearGradient>
+<linearGradient id="fn-grip" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#b4dcff"/></linearGradient>
+<linearGradient id="fn-edge" gradientUnits="userSpaceOnUse" x1="0" y1="604" x2="0" y2="720"><stop offset="0" stop-color="#cfe8ff" stop-opacity="0"/><stop offset=".5" stop-color="#e8f4ff" stop-opacity=".95"/><stop offset="1" stop-color="#cfe8ff" stop-opacity="0"/></linearGradient>
+<filter id="fn-soft" filterUnits="userSpaceOnUse" x="-600" y="-500" width="1590" height="1720"><feGaussianBlur stdDeviation="7"/></filter>
+<filter id="fn-shade" filterUnits="userSpaceOnUse" x="-600" y="-500" width="1590" height="1720"><feGaussianBlur stdDeviation="4"/></filter>
+<mask id="fn-out" maskUnits="userSpaceOnUse" x="-600" y="-500" width="1590" height="1720"><rect x="-600" y="-500" width="1590" height="1720" fill="#fff"/><g fill="#000"><rect x="-400" y="-200" width="550" height="296" rx="12"/><rect x="-400" y="110" width="428" height="250" rx="12"/><rect x="-400" y="374" width="428" height="216" rx="12"/><rect x="362" y="424" width="428" height="166" rx="12"/><rect x="-400" y="604" width="608" height="316" rx="12"/><rect x="164" y="-200" width="626" height="296" rx="12"/><rect x="222" y="604" width="568" height="316" rx="12"/><rect x="362" y="110" width="428" height="300" rx="12"/></g></mask>
+</defs>
+<g mask="url(#fn-out)"><g class="f-shade" fill="#06104a" filter="url(#fn-shade)"><rect x="-400" y="-192" width="550" height="296" rx="12"/><rect x="-400" y="118" width="428" height="250" rx="12"/><rect x="-400" y="382" width="428" height="216" rx="12"/><rect x="362" y="432" width="428" height="166" rx="12"/><rect x="-400" y="612" width="608" height="316" rx="12"/><rect x="164" y="-192" width="626" height="296" rx="12"/><rect x="222" y="612" width="568" height="316" rx="12"/><rect x="362" y="118" width="428" height="300" rx="12"/></g></g>
+<g class="f-glow" filter="url(#fn-soft)"><rect x="164" y="-200" width="626" height="296" rx="12" stroke="#c4d6ff"/><rect x="222" y="604" width="568" height="316" rx="12" stroke="#c4d6ff"/><rect x="362" y="110" width="428" height="300" rx="12" class="g-teal" stroke="#8ff6dd"/></g>
+<g class="f-panes" fill="url(#fn-pf)" stroke="url(#fn-ps)"><rect x="-400" y="-200" width="550" height="296" rx="12"/><rect x="-400" y="110" width="428" height="250" rx="12"/><rect x="-400" y="374" width="428" height="216" rx="12"/><rect x="362" y="424" width="428" height="166" rx="12"/><rect x="-400" y="604" width="608" height="316" rx="12"/><rect x="164" y="-200" width="626" height="296" rx="12" fill="url(#fn-cf)" stroke="url(#fn-cs)"/><rect x="222" y="604" width="568" height="316" rx="12" fill="url(#fn-cf)" stroke="url(#fn-cs)"/><rect x="362" y="110" width="428" height="300" rx="12" fill="url(#fn-tf)" stroke="url(#fn-ts)"/></g>
+<g class="f-edge" stroke="url(#fn-edge)"><line x1="208" y1="604" x2="208" y2="720"/><line x1="222" y1="604" x2="222" y2="720"/></g>
+<rect x="208" y="618" width="14" height="80" rx="7.0" fill="#8cc8ff" opacity=".9" filter="url(#fn-soft)"/>
+<rect class="f-grip" x="212" y="624" width="6" height="68" rx="3.0" fill="url(#fn-grip)"/>
+</svg>
+<div class="panes panes-phone">
+<svg class="pn-phone" viewBox="0 0 390 720" preserveAspectRatio="xMidYMid meet" focusable="false">
+<defs>
+<linearGradient id="fp-pf" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".1"/><stop offset=".45" stop-color="#fff" stop-opacity=".03"/><stop offset="1" stop-color="#0a1466" stop-opacity=".12"/></linearGradient>
+<linearGradient id="fp-ps" x1="0" y1="0" x2=".2" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".72"/><stop offset=".45" stop-color="#e9efff" stop-opacity=".42"/><stop offset="1" stop-color="#e9efff" stop-opacity=".3"/></linearGradient>
+<linearGradient id="fp-cf" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#bcd0ff" stop-opacity=".46"/><stop offset=".55" stop-color="#8fb0ff" stop-opacity=".16"/><stop offset="1" stop-color="#6f93ff" stop-opacity=".06"/></linearGradient>
+<linearGradient id="fp-cs" x1="0" y1="0" x2=".2" y2="1"><stop offset="0" stop-color="#fff" stop-opacity="1"/><stop offset="1" stop-color="#d9e4ff" stop-opacity=".5"/></linearGradient>
+<linearGradient id="fp-tf" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5ff2d2" stop-opacity=".62"/><stop offset=".55" stop-color="#2fd6b4" stop-opacity=".26"/><stop offset="1" stop-color="#2cc9ad" stop-opacity=".06"/></linearGradient>
+<linearGradient id="fp-ts" x1="0" y1="0" x2=".2" y2="1"><stop offset="0" stop-color="#f0fffb" stop-opacity="1"/><stop offset="1" stop-color="#a6f5e2" stop-opacity=".55"/></linearGradient>
+<linearGradient id="fp-grip" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#b4dcff"/></linearGradient>
+<linearGradient id="fp-edge" gradientUnits="userSpaceOnUse" x1="0" y1="604" x2="0" y2="720"><stop offset="0" stop-color="#cfe8ff" stop-opacity="0"/><stop offset=".5" stop-color="#e8f4ff" stop-opacity=".95"/><stop offset="1" stop-color="#cfe8ff" stop-opacity="0"/></linearGradient>
+<filter id="fp-soft" filterUnits="userSpaceOnUse" x="-600" y="-500" width="1590" height="1720"><feGaussianBlur stdDeviation="7"/></filter>
+<filter id="fp-shade" filterUnits="userSpaceOnUse" x="-600" y="-500" width="1590" height="1720"><feGaussianBlur stdDeviation="4"/></filter>
+<mask id="fp-out" maskUnits="userSpaceOnUse" x="-600" y="-500" width="1590" height="1720"><rect x="-600" y="-500" width="1590" height="1720" fill="#fff"/><g fill="#000"><rect x="-400" y="-200" width="550" height="296" rx="12"/><rect x="-400" y="110" width="449" height="250" rx="12"/><rect x="-400" y="374" width="449" height="216" rx="12"/><rect x="341" y="424" width="449" height="166" rx="12"/><rect x="-400" y="604" width="608" height="316" rx="12"/><rect x="164" y="-200" width="626" height="296" rx="12"/><rect x="222" y="604" width="568" height="316" rx="12"/><rect x="341" y="110" width="449" height="300" rx="12"/></g></mask>
+</defs>
+<g mask="url(#fp-out)"><g class="f-shade" fill="#06104a" filter="url(#fp-shade)"><rect x="-400" y="-192" width="550" height="296" rx="12"/><rect x="-400" y="118" width="449" height="250" rx="12"/><rect x="-400" y="382" width="449" height="216" rx="12"/><rect x="341" y="432" width="449" height="166" rx="12"/><rect x="-400" y="612" width="608" height="316" rx="12"/><rect x="164" y="-192" width="626" height="296" rx="12"/><rect x="222" y="612" width="568" height="316" rx="12"/><rect x="341" y="118" width="449" height="300" rx="12"/></g></g>
+<g class="f-glow" filter="url(#fp-soft)"><rect x="164" y="-200" width="626" height="296" rx="12" stroke="#c4d6ff"/><rect x="222" y="604" width="568" height="316" rx="12" stroke="#c4d6ff"/><rect x="341" y="110" width="449" height="300" rx="12" class="g-teal" stroke="#8ff6dd"/></g>
+<g class="f-panes" fill="url(#fp-pf)" stroke="url(#fp-ps)"><rect x="-400" y="-200" width="550" height="296" rx="12"/><rect x="-400" y="110" width="449" height="250" rx="12"/><rect x="-400" y="374" width="449" height="216" rx="12"/><rect x="341" y="424" width="449" height="166" rx="12"/><rect x="-400" y="604" width="608" height="316" rx="12"/><rect x="164" y="-200" width="626" height="296" rx="12" fill="url(#fp-cf)" stroke="url(#fp-cs)"/><rect x="222" y="604" width="568" height="316" rx="12" fill="url(#fp-cf)" stroke="url(#fp-cs)"/><rect x="341" y="110" width="449" height="300" rx="12" fill="url(#fp-tf)" stroke="url(#fp-ts)"/></g>
+<g class="f-edge" stroke="url(#fp-edge)"><line x1="208" y1="604" x2="208" y2="720"/><line x1="222" y1="604" x2="222" y2="720"/></g>
+<rect x="208" y="618" width="14" height="80" rx="7.0" fill="#8cc8ff" opacity=".9" filter="url(#fp-soft)"/>
+<rect class="f-grip" x="212" y="624" width="6" height="68" rx="3.0" fill="url(#fp-grip)"/>
+</svg>
+</div>
+    </div>
+    <div class="closing-inner">
+      <img class="closing-icon" src="assets/identity/app-icon-native-dark-256.png" width="112" height="112" alt="">
+      <h2 id="closing-title">Give your windows&nbsp;room.</h2>
+      <div class="action">
+        <a class="btn btn-primary" href="https://github.com/LMC-Karma/BetterTile/releases/latest" data-download>
+          <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true"><path d="M10 3v10m0 0-4-4m4 4 4-4M4 16h12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Download for Mac
+        </a>
+        <p class="req"><span class="req-key">Apple silicon Mac · macOS 26 or later</span> <span>Free and open source · Public beta</span></p>
+      </div>
+      <p class="download-note">Self-signed beta. The first launch needs <a href="#open-anyway"><span>Open&nbsp;Anyway</span></a>.</p>
+    </div>
+  </section>
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <div class="footer-brand">
+      <a class="brand" href="#top">
+        <img src="assets/identity/app-icon-native-dark-64.png" width="28" height="28" alt="">
+        <span>BetterTile</span>
+      </a>
+      <p>A free, open-source window manager for&nbsp;macOS.</p>
+    </div>
+    <nav class="footer-links" aria-label="Footer">
+      <div class="footer-group">
+        <p class="footer-label">Project</p>
+        <ul>
+          <li><a href="https://github.com/LMC-Karma/BetterTile/releases/latest" data-download>Download</a></li>
+          <li><a href="https://github.com/LMC-Karma/BetterTile">Source code</a></li>
+          <li><a href="https://github.com/LMC-Karma/BetterTile/releases">Release notes</a></li>
+          <li><a href="https://github.com/LMC-Karma/BetterTile/issues">Report an issue</a></li>
+        </ul>
+      </div>
+      <div class="footer-group">
+        <p class="footer-label">Trust</p>
+        <ul>
+          <li><a href="https://github.com/LMC-Karma/BetterTile/blob/main/SECURITY.md">Privacy and security</a></li>
+          <li><a href="https://github.com/LMC-Karma/BetterTile/blob/main/LICENSE">License (GPL v3 or later)</a></li>
+          <li><a href="acknowledgements.html">Acknowledgements</a></li>
+        </ul>
+      </div>
+    </nav>
+  </div>
+  <p class="wrap fine">This site loads no third&#8209;party resources. BetterTile is not affiliated with Apple. Mac and macOS are trademarks of Apple Inc.</p>
+</footer>
+</body>
+</html>
