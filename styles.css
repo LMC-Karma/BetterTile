@@ -1,0 +1,832 @@
+/* BetterTile website: one midnight ground; two lit cobalt screens (hero tour, closing)
+   carry the colour; the closing screen holds a tiled desktop. */
+
+@font-face {
+  font-family: "Inter";
+  src: url("assets/fonts/Inter-latin.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ---------- Tokens ----------
+   Semantic roles (ui-ux-pro-max `color-semantic`) are defined once per surface:
+   the midnight desk (:root) and the lit wallpaper screens (.hero, .closing).
+   Components use only the roles, so one component reads right on every surface. */
+:root {
+  /* Midnight desk */
+  --bg: #07090d;
+  --text: #f5f7fc;
+  --muted: #aab4c4;          /* 9.5:1 on --bg */
+  --dim: #8792a5;            /* 6.3:1 on --bg */
+  --hair: rgba(255, 255, 255, .08);
+  --hair-strong: rgba(255, 255, 255, .14);
+  --panel-top: #121824;
+  --panel-bot: #0d121a;
+  --link: #9db5ff;
+  --signal: #63dec0;         /* teal: "on", requested, none */
+  --focus: #9db5ff;
+  --step: #9db5ff;
+  --step-line: rgba(157, 181, 255, .3);
+
+  /* Media display: cobalt bezel */
+  --bezel-top: #1a2a5e;
+  --bezel-bot: #0a1333;
+  --media-shadow: 0 2px 4px rgba(0, 0, 0, .45), 0 28px 56px -24px rgba(0, 0, 0, .9);
+
+  /* Wallpaper (sampled from the product's own desktop) */
+  --field-base: #2f4fe2;
+  --field-low: #2846cf;
+  --field-deep: 22, 38, 150;
+  --field-sky: 150, 186, 255;
+  --field-teal: #2cc9ad;
+  --on-field: #ffffff;
+  --on-field-2: #eef2ff;
+  --on-field-soft: #c7d3ff;  /* second headline line: ≥3.9:1 on the wallpaper (large text) */
+
+  /* Type: Inter / Inter ("Modern Dark Cinema" pairing) */
+  --font: "Inter", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  --t-display: clamp(2.75rem, 1.2rem + 5.2vw, 5.75rem);
+  --t-h2: clamp(2rem, 1.25rem + 2.6vw, 3.25rem);
+  --t-h2-quiet: clamp(1.875rem, 1.3rem + 1.4vw, 2.4rem);
+  --t-h3: 1.25rem;
+  --t-lede: clamp(1.0625rem, .95rem + .45vw, 1.3125rem);
+  --t-body: 1.0625rem;
+  --t-small: .9375rem;
+  --t-fine: .8125rem;
+
+  /* Space (8-pt scale; spacious density) */
+  --gutter: clamp(20px, 4vw, 40px);
+  --section: clamp(96px, 10.5vw, 152px);
+  --wrap: 1200px;
+  --inset: 12px;             /* the two screens sit 12 px in from the window edge */
+
+  /* Shape: one radius family */
+  --r-surface: 28px;         /* the two wallpaper screens */
+  --r-mat: 24px;
+  --r-frame: 18px;
+  --r-panel: 18px;
+  --r-ctl: 12px;
+  --ease: cubic-bezier(.22, 1, .36, 1);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html {
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+  scroll-padding-top: 96px;
+  color-scheme: dark;
+  background: var(--bg);
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: var(--t-body);
+  line-height: 1.6;
+  font-feature-settings: "cv11", "ss03";
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow-x: clip;
+}
+
+::selection { background: rgba(157, 181, 255, .3); }
+
+img, video, svg { display: block; max-width: 100%; }
+p { margin: 0; text-wrap: pretty; }
+h1, h2, h3 { margin: 0; text-wrap: balance; }
+h3 { line-height: 1.3; }
+a { color: inherit; }
+ul, ol, dl, dd { margin: 0; }
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+
+.skip {
+  position: absolute; left: 16px; top: -60px; z-index: 100;
+  padding: 12px 16px; background: #fff; color: #0b1233;
+  border-radius: var(--r-ctl); text-decoration: none; font-weight: 600;
+}
+.skip:focus { top: 16px; }
+
+.wrap {
+  width: min(var(--wrap), 100% - 2 * var(--gutter));
+  margin-inline: auto;
+}
+.dim { color: var(--dim); }
+
+/* ---------- Buttons and links ---------- */
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+  min-height: 44px; padding: 0 18px;
+  border-radius: var(--r-ctl);
+  font: 600 .9375rem/1 var(--font); letter-spacing: -.005em;
+  text-decoration: none; white-space: nowrap;
+  transition: background-color .2s var(--ease), box-shadow .2s var(--ease), transform .2s var(--ease);
+}
+.btn:active { transform: translateY(1px); }
+
+/* The one loud button: white on the wallpaper. It appears only in the hero and the closing. */
+.btn-primary {
+  min-height: 54px; padding: 0 28px; font-size: 1.0625rem;
+  background: #fff; color: #1a2a8f;
+  box-shadow: inset 0 -1px 0 rgba(12, 20, 60, .08), 0 1px 1px rgba(4, 8, 50, .18), 0 14px 30px -12px rgba(4, 8, 50, .6);
+}
+.btn-primary:hover { background: #eef2ff; }
+
+/* The header button stays quiet: a hairline ring, no fill. */
+.btn-quiet {
+  background: transparent; color: var(--text);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .2);
+}
+.btn-quiet:hover { background: rgba(255, 255, 255, .08); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .3); }
+
+.links { display: flex; flex-wrap: wrap; gap: 0 28px; }
+.link {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 44px;
+  font-size: var(--t-small); font-weight: 600; color: var(--text); text-decoration: none;
+  transition: color .2s var(--ease);
+}
+.link svg { color: var(--dim); transition: transform .2s var(--ease), color .2s var(--ease); }
+.link:hover { color: var(--link); }
+.link:hover svg { color: var(--link); transform: translate(1px, -1px); }
+
+/* Links in running text keep their line and get a 44 px hit area (vertical padding on an inline box). */
+.inline-link {
+  color: var(--link); font-weight: 550; white-space: nowrap;
+  text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 4px;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  position: relative; z-index: 1; padding-block: calc((44px - 1.2em) / 2 + 1px);
+}
+.inline-link:hover { text-decoration-color: currentColor; }
+
+kbd {
+  display: inline-grid; place-items: center; min-width: 24px; height: 24px; padding: 0 5px; margin: 0;
+  border-radius: 6px; vertical-align: 1px;
+  font: 500 .8125rem/1 var(--font); color: var(--text);
+  background: linear-gradient(180deg, #1c2333, #141a26);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .1), inset 0 -1.5px 0 rgba(0, 0, 0, .4), 0 0 0 1px rgba(255, 255, 255, .1);
+}
+
+/* ---------- Header: one glass capsule in the midnight tone ---------- */
+
+.bar {
+  position: fixed; inset: 0 0 auto; z-index: 50;
+  /* The capsule spans the content measure: its edges line up with the headline and the media. */
+  padding: 22px var(--gutter) 0;
+  pointer-events: none;
+}
+.bar-inner {
+  pointer-events: auto; position: relative;
+  display: flex; align-items: center; gap: 8px;
+  max-width: var(--wrap); margin-inline: auto;
+  min-height: 60px; padding: 8px 8px 8px 16px;
+  border-radius: 18px;
+  /* Real glass: the wallpaper and the videos pass behind it. Fill .86 keeps nav text ≥7:1 even over a white frame of video. */
+  background: rgba(12, 16, 26, .86);
+  -webkit-backdrop-filter: blur(24px) saturate(150%);
+  backdrop-filter: blur(24px) saturate(150%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .1),
+    0 0 0 1px rgba(255, 255, 255, .07),
+    0 12px 32px -14px rgba(0, 0, 0, .7);
+}
+.brand {
+  display: inline-flex; align-items: center; gap: 10px;
+  min-height: 44px; margin-right: auto;
+  font-weight: 650; font-size: 1.0625rem; letter-spacing: -.02em;
+  text-decoration: none; color: #f5f7fc;
+}
+.brand img { border-radius: 7px; }
+.nav { display: flex; align-items: center; gap: 2px; margin-right: 8px; }
+.nav a {
+  display: inline-flex; align-items: center; min-height: 44px; padding: 0 14px;
+  border-radius: 10px; color: #c3cbd8; font-size: .9375rem; font-weight: 500;
+  text-decoration: none; transition: background-color .2s var(--ease), color .2s var(--ease);
+}
+.nav a:hover { color: #fff; background: rgba(255, 255, 255, .07); }
+.bar .btn-quiet { color: #f5f7fc; }
+.menu-btn {
+  display: none; width: 44px; height: 44px; place-items: center;
+  border: 0; border-radius: 10px; background: transparent; color: #f5f7fc; cursor: pointer;
+}
+.menu-btn:hover { background: rgba(255, 255, 255, .07); }
+.menu-btn[aria-expanded="true"] { background: rgba(255, 255, 255, .1); }
+
+@media (prefers-reduced-transparency: reduce) {
+  .bar-inner { background: #0e121c; -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
+
+/* ---------- Wallpaper screens (hero and closing) ---------- */
+
+.field {
+  position: absolute; z-index: -1;
+  inset: var(--inset) var(--inset) auto;
+  border-radius: var(--r-surface);
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .1), inset 0 1px 0 rgba(255, 255, 255, .22);
+}
+
+/* ---------- Hero ---------- */
+
+.hero {
+  position: relative; isolation: isolate;
+  padding-top: 116px;
+}
+/* The wallpaper ends a little below the middle of the demo: the glass mat crosses from the
+   lit screen onto the midnight desk. */
+.hero > .field {
+  bottom: clamp(150px, 19vw, 290px);
+  /* Deeper cobalt where the left-aligned headline sits; the sky light moves to the top right,
+     teal to the lower right. White text ≥5.4:1 across the copy area. */
+  background:
+    linear-gradient(118deg, rgba(255, 255, 255, 0) 40%, rgba(255, 255, 255, .07) 52%, rgba(255, 255, 255, 0) 64%),
+    radial-gradient(52% 70% at 104% -8%, rgba(var(--field-sky), .78) 0%, rgba(var(--field-sky), 0) 68%),
+    radial-gradient(50% 60% at 104% 106%, var(--field-teal) 0%, rgba(44, 201, 173, .36) 42%, rgba(44, 201, 173, 0) 74%),
+    radial-gradient(60% 64% at -6% -10%, rgba(var(--field-deep), .55) 0%, rgba(var(--field-deep), 0) 70%),
+    radial-gradient(60% 56% at -4% 106%, rgba(124, 156, 255, .5) 0%, rgba(124, 156, 255, 0) 70%),
+    linear-gradient(178deg, var(--field-base) 0%, var(--field-low) 100%);
+}
+/* A faint corner of the closing's tiled desktop, so the two screens are the same desktop. It sits right of the
+   headline and above the offer, below the header capsule, and fades before any text or the film. */
+.hero-panes {
+  position: absolute; top: 96px; right: 0; width: min(460px, 32%); height: auto;
+  --fade-x: linear-gradient(90deg, transparent, #000 46%);
+  --fade-y: linear-gradient(180deg, transparent, #000 16%, #000 34%, transparent 60%);
+  -webkit-mask-image: var(--fade-x), var(--fade-y);
+  -webkit-mask-composite: source-in;
+  mask-image: var(--fade-x), var(--fade-y);
+  mask-composite: intersect;
+}
+.hero-panes rect { vector-effect: non-scaling-stroke; stroke-width: 1; }
+@media (max-width: 900px) { .hero-panes { display: none; } }
+.hero-copy { color: var(--on-field); }
+.hero h1 {
+  font-size: var(--t-display); line-height: 1; font-weight: 680; letter-spacing: -.038em;
+}
+.hero h1 span, .section h2 span { display: block; }
+.hero h1 span { color: var(--on-field-soft); }
+
+/* One reading path: the offer, then Download with its facts beside it (a hairline). */
+.hero-foot {
+  display: flex; align-items: center; gap: 24px 56px; flex-wrap: wrap;
+  margin-top: 28px;
+}
+.lede {
+  max-width: 30ch;
+  font-size: var(--t-lede); line-height: 1.5; color: var(--on-field-2);
+}
+.action { display: flex; align-items: center; gap: 24px; }
+.req {
+  display: grid; gap: 2px;
+  padding-left: 24px; box-shadow: inset 1px 0 0 rgba(255, 255, 255, .34);
+  font-size: var(--t-small); line-height: 1.5; color: var(--on-field-2);
+}
+.req-key { color: #fff; font-weight: 550; }
+.hero :focus-visible, .closing :focus-visible { outline-color: #fff; }
+
+/* ---------- Media ---------- */
+
+.media { margin: 0; position: relative; }
+/* A small display in a cobalt bezel. */
+.media-frame {
+  --bezel: 5px;
+  position: relative; isolation: isolate;
+  padding: var(--bezel);
+  border-radius: var(--r-frame);
+  background: linear-gradient(180deg, var(--bezel-top), var(--bezel-bot) 70%);
+  box-shadow:
+    inset 0 1px 0 rgba(190, 208, 255, .26),
+    inset 0 0 0 1px rgba(150, 176, 255, .12),
+    var(--media-shadow);
+}
+.media-frame video {
+  width: 100%; height: auto; aspect-ratio: 16 / 9; object-fit: cover;
+  border-radius: calc(var(--r-frame) - var(--bezel));
+  background: #0a1333;
+}
+
+/* Hero: a glass mat is the bezel. It has a purpose: wallpaper above, desk below. */
+.media-hero { margin-top: 32px; }
+/* Short desktop windows (1440×800, 1366×768): the headline steps down a size, so the labelled Play on the
+   middle of the poster stays inside the first screen. */
+@media (min-width: 601px) and (max-height: 860px) {
+  .hero { padding-top: 104px; }
+  .hero h1 { font-size: min(var(--t-display), 4.75rem); }
+  .hero-foot { margin-top: 24px; }
+  .media-hero { margin-top: 24px; }
+  .hero-panes { top: 84px; width: min(400px, 28%); }
+}
+/* MacBook windows with the Dock (1440×760, 1440×720): type and spacing step down once more, and from 1240px
+   the offer takes two lines instead of three (one row with Download). Only then does the film narrow, and only
+   as much as the window height needs (a height-aware width), so the labelled Play stays 16px+ above the fold.
+   Film width = (window height − 16 − half the pill − the film's top) × 2 × 1384/778, plus the mat. */
+@media (min-width: 601px) and (max-height: 780px) {
+  .hero { padding-top: 96px; }
+  .hero h1 { font-size: min(var(--t-display), 4.25rem); }
+  .hero-foot { margin-top: 20px; }
+  /* The offer moves up into the echo's lower panes, so the echo is a little smaller and fades out sooner. */
+  .hero-panes { width: min(380px, 26%); --fade-y: linear-gradient(180deg, transparent, #000 14%, #000 28%, transparent 46%); }
+  .media-hero {
+    margin-top: 20px; margin-inline: auto;
+    /* Below 1240px the offer wraps under the headline, so the film starts lower (≤ 450px). */
+    width: min(100%, max(600px, (100vh - 495px) * 3.56 + 20px));
+    width: min(100%, max(600px, (100svh - 495px) * 3.56 + 20px));
+  }
+}
+@media (min-width: 1240px) and (max-height: 780px) {
+  .lede { max-width: 40ch; }
+  /* The film starts at 345px here. */
+  .media-hero {
+    width: min(100%, max(860px, (100vh - 390px) * 3.56 + 20px));
+    width: min(100%, max(860px, (100svh - 390px) * 3.56 + 20px));
+  }
+}
+.media-mat {
+  position: relative;
+  padding: 10px; border-radius: var(--r-mat);
+  background: rgba(255, 255, 255, .13);
+  -webkit-backdrop-filter: blur(24px) saturate(150%);
+  backdrop-filter: blur(24px) saturate(150%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .45),
+    inset 0 0 0 1px rgba(255, 255, 255, .16),
+    0 2px 4px rgba(0, 0, 0, .2),
+    0 44px 90px -36px rgba(0, 0, 0, .85);
+}
+/* Light edge: brighter where the light falls. */
+.media-mat::before {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1px; pointer-events: none;
+  background: linear-gradient(150deg, rgba(255, 255, 255, .95), rgba(255, 255, 255, .18) 32%, rgba(255, 255, 255, .04) 62%, rgba(255, 255, 255, .3));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+}
+.media-hero .media-frame { --bezel: 0px; background: #0a1333; border-radius: 14px; box-shadow: 0 0 0 1px rgba(0, 0, 0, .4); }
+.media-hero .media-frame video { border-radius: 14px; }
+/* Soft cobalt light spilling from the screen onto the desk below. */
+.media-hero::after {
+  content: ""; position: absolute; z-index: -1; left: 6%; right: 6%; bottom: -12%; height: 40%;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(49, 92, 244, .34), rgba(49, 92, 244, .08) 60%, transparent);
+  filter: blur(40px); pointer-events: none;
+}
+@media (prefers-reduced-transparency: reduce) {
+  .media-mat { background: #3a4a8a; -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
+
+/* Play / Pause: glass, because moving video passes behind it. */
+.play {
+  position: absolute; right: 16px; bottom: 16px; z-index: 2;
+  width: 44px; height: 44px; display: grid; place-items: center;
+  border: 0; border-radius: 50%; cursor: pointer; color: #fff;
+  background: rgba(14, 20, 40, .66);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+  backdrop-filter: blur(14px) saturate(160%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .26), inset 0 0 0 1px rgba(255, 255, 255, .14), 0 2px 10px rgba(8, 12, 30, .3);
+  transition: background-color .2s var(--ease);
+}
+.play:hover { background: rgba(14, 20, 40, .82); }
+.play:focus-visible { outline: 2px solid #fff; outline-offset: 2px; border-radius: 50%; }
+.play .i-play { display: none; }
+.play[data-state="paused"] .i-play { display: block; }
+.play[data-state="paused"] .i-pause { display: none; }
+.media-hero .play { right: 14px; bottom: 14px; }
+
+/* The tour's labelled pill (both sources): wide screens over the film's lower left; phones under it. */
+.tour-stage { position: relative; }
+.media-tour .media-frame video { aspect-ratio: 1384 / 778; }
+.play-disc { display: grid; place-items: center; }
+.play-tour {
+  left: 34px; right: auto; bottom: 34px;
+  width: auto; height: auto; min-height: 58px;
+  display: inline-flex; align-items: center; gap: 14px;
+  padding: 6px 24px 6px 6px; border-radius: 999px;
+  background: rgba(12, 17, 34, .86);
+  font: 600 1.0625rem/1 var(--font); letter-spacing: -.01em; white-space: nowrap;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .28), inset 0 0 0 1px rgba(255, 255, 255, .16), 0 10px 30px -8px rgba(4, 8, 30, .7);
+}
+.play-tour:focus-visible { border-radius: 999px; }
+/* Hero: the tour is the first video, so the still invites a play. The labelled pill sits on the middle of
+   the poster, inside the first screen at 1440×900 and 1440×800. */
+.media-hero .play-tour { left: 50%; right: auto; bottom: auto; top: 50%; translate: -50% -50%; }
+.play-tour:hover { background: rgba(14, 20, 40, .92); }
+.play-tour .play-disc { width: 46px; height: 46px; border-radius: 50%; background: #fff; color: #1a2a8f; box-shadow: 0 2px 8px rgba(4, 8, 30, .35); }
+.play-tour[data-state="paused"] .i-play { margin-left: 2px; }
+.play-time { margin-left: 6px; color: #c9d1ea; font-weight: 500; font-variant-numeric: tabular-nums; }
+/* While the tour plays, Pause stays exactly where Play was: the pill keeps its box, its glass and label
+   go, and its white disc becomes a glass Pause disc (46 px) in the same spot. Only the disc takes the
+   pointer, so the rest of the film stays clear. */
+.play-tour[data-state="playing"] {
+  background: none; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none;
+  pointer-events: none;
+}
+.play-tour[data-state="playing"] .play-label { visibility: hidden; }
+.play-tour[data-state="playing"] .play-disc {
+  pointer-events: auto; color: #fff;
+  background: rgba(14, 20, 40, .66);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+  backdrop-filter: blur(14px) saturate(160%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .26), inset 0 0 0 1px rgba(255, 255, 255, .14), 0 2px 10px rgba(8, 12, 30, .3);
+}
+.play-tour[data-state="playing"]:hover { background: none; }
+.play-tour[data-state="playing"]:hover .play-disc { background: rgba(14, 20, 40, .82); }
+.play-tour[data-state="playing"]:focus-visible { outline: none; }
+.play-tour[data-state="playing"]:focus-visible .play-disc { outline: 2px solid #fff; outline-offset: 2px; }
+
+/* Controls that need the script stay hidden until it attaches their handlers. */
+[hidden] { display: none !important; }
+
+/* ---------- Sections ---------- */
+
+.section { padding-top: var(--section); }
+.section h2 {
+  font-size: var(--t-h2); line-height: 1.04; font-weight: 660; letter-spacing: -.032em;
+}
+/* Couplets: the feature name in full ink, then a softer clause (≥5:1). */
+.section h2 span { color: var(--dim); }
+.section h2.h-quiet { font-size: var(--t-h2-quiet); line-height: 1.1; letter-spacing: -.028em; }
+
+.split-head {
+  display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  gap: 24px 64px; align-items: end;
+  margin-bottom: clamp(40px, 5vw, 64px);
+}
+.split-quiet { align-items: last baseline; }
+.split-copy { max-width: 34rem; color: var(--muted); }
+
+/* Linked resizing: the first feature after the tour; its demo is the first loop that plays by itself. */
+.modes { display: grid; grid-template-columns: 1fr 1fr; gap: 0 28px; margin-top: 10px; }
+.mode { padding-top: 16px; box-shadow: inset 0 1px 0 var(--hair-strong); }
+.mode h3 { font-size: 1.0625rem; font-weight: 650; letter-spacing: -.012em; color: var(--text); }
+.mode p { margin-top: 6px; font-size: var(--t-small); color: var(--muted); }
+.media-lead::after {
+  content: ""; position: absolute; z-index: -1; left: 8%; right: 8%; bottom: -10%; height: 34%;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(49, 92, 244, .22), rgba(49, 92, 244, .05) 60%, transparent);
+  filter: blur(36px); pointer-events: none;
+}
+
+/* Feature rows (Adaptive, tour) */
+.feature-row {
+  display: grid; grid-template-columns: minmax(0, 9fr) minmax(0, 11fr);
+  gap: 56px; align-items: center;
+}
+.feature-row-flip { grid-template-columns: minmax(0, 11fr) minmax(0, 9fr); }
+.feature-copy { display: grid; gap: 18px; color: var(--muted); }
+.feature-copy h2 { color: var(--text); margin-bottom: 6px; }
+
+/* Feature gallery: pairs, with one wide Saved Layouts row of different weight. */
+.grid {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 72px 48px;
+}
+.item h3 { margin-top: 24px; font-size: var(--t-h3); font-weight: 650; letter-spacing: -.018em; }
+.item > p, .item-copy > p { margin-top: 8px; color: var(--muted); max-width: 36rem; }
+.item-wide {
+  grid-column: 1 / -1;
+  display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 4fr);
+  gap: 56px; align-items: center;
+  padding-block: 8px;
+}
+.item-wide .item-copy h3 { margin-top: 0; font-size: 1.75rem; letter-spacing: -.025em; }
+.item-wide .item-copy p + p { margin-top: 14px; font-size: var(--t-small); color: var(--dim); }
+
+/* ---------- Privacy: a ledger, which lists what is not requested ---------- */
+
+.privacy-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+  gap: 48px 72px; align-items: center;
+}
+.privacy-copy { display: grid; gap: 22px; color: var(--muted); max-width: 30rem; }
+.privacy-copy h2 { color: var(--text); }
+.privacy-copy .links { margin-top: -4px; }
+
+.ledger {
+  border-radius: var(--r-panel);
+  background: linear-gradient(180deg, var(--panel-top), var(--panel-bot));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07), inset 0 0 0 1px rgba(255, 255, 255, .06);
+}
+.ledger dl > div {
+  display: grid; grid-template-columns: 9.5rem 1fr; gap: 24px;
+  padding: 20px 28px;
+}
+.ledger dl > div + div { border-top: 1px solid var(--hair); }
+.ledger dt { color: var(--dim); font-size: var(--t-small); padding-top: 1px; }
+.ledger dd { font-size: 1rem; line-height: 1.55; }
+.perms { list-style: none; padding: 0; display: grid; }
+.perm-on { display: grid; grid-template-columns: 1fr auto; gap: 4px 16px; padding-bottom: 12px; }
+.perm-state { color: var(--signal); font-size: var(--t-small); font-weight: 550; }
+.perm-why { grid-column: 1 / -1; color: var(--muted); font-size: var(--t-small); }
+.perm-off {
+  display: flex; justify-content: space-between; gap: 16px;
+  padding: 10px 0; border-top: 1px solid var(--hair);
+  font-size: var(--t-small); color: var(--dim);
+}
+.perm-off:last-child { padding-bottom: 0; }
+.signal { display: inline-flex; align-items: center; gap: 9px; color: var(--signal); font-weight: 600; }
+.signal::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 3px rgba(99, 222, 192, .16); }
+
+/* ---------- Install: a compact timeline ---------- */
+
+.steps {
+  list-style: none; padding: 0;
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 32px;
+  counter-reset: step;
+}
+.steps li { counter-increment: step; position: relative; padding-top: 64px; }
+.steps li::before {
+  content: counter(step);
+  position: absolute; top: 0; left: 0;
+  width: 40px; height: 40px; display: grid; place-items: center;
+  border-radius: 50%; color: var(--step);
+  background: linear-gradient(180deg, var(--panel-top), var(--panel-bot));
+  font-weight: 650; font-size: 1rem; font-variant-numeric: tabular-nums;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08), 0 0 0 1px rgba(157, 181, 255, .26);
+}
+.steps li:not(:last-child)::after {
+  content: ""; position: absolute; top: 20px; left: 56px; right: -16px; height: 1px;
+  background: linear-gradient(90deg, var(--step-line), rgba(157, 181, 255, .05));
+}
+.steps h3 { font-size: var(--t-h3); font-weight: 650; letter-spacing: -.018em; }
+.steps p { margin-top: 8px; color: var(--muted); }
+
+/* Step 3: what System Settings shows, in the dark appearance. An illustration, not a control. */
+.sys-card {
+  margin-top: 20px; max-width: 300px;
+  background: #1e1e20; border-radius: 14px; overflow: hidden;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, .1), inset 0 1px 0 rgba(255, 255, 255, .08), 0 24px 40px -22px rgba(0, 0, 0, .9);
+  font-size: .75rem; line-height: 1.4; color: #f5f5f7;
+  user-select: none; cursor: default;
+}
+.sys-title {
+  display: flex; align-items: center; gap: 12px;
+  min-height: 34px; padding: 0 12px;
+  background: #2a2a2d;
+  font-weight: 650; font-size: .8125rem; letter-spacing: -.01em;
+  box-shadow: inset 0 -1px 0 rgba(0, 0, 0, .5);
+}
+.sys-lights { display: inline-flex; gap: 6px; }
+.sys-lights i { width: 9px; height: 9px; border-radius: 50%; background: #ff5f57; }
+.sys-lights i:nth-child(2) { background: #febc2e; }
+.sys-lights i:nth-child(3) { background: #28c840; }
+.sys-body { padding: 10px 10px 12px; }
+.steps .sys-group { margin: 0 0 6px 6px; font-size: .6875rem; font-weight: 650; color: #98989d; }
+.sys-panel {
+  display: grid; gap: 10px; justify-items: end; padding: 12px;
+  background: #2c2c2f; border-radius: 10px; box-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .08);
+}
+.steps .sys-panel p { margin: 0; justify-self: stretch; color: #f5f5f7; font-size: .75rem; line-height: 1.4; }
+/* macOS push button with the system-blue keyboard-focus ring: the one place to click. */
+.sys-btn {
+  display: inline-flex; align-items: center; min-height: 24px; padding: 0 12px;
+  border-radius: 999px; background: #636366; color: #fff; font-weight: 500; font-size: .75rem;
+  box-shadow: inset 0 .5px 0 rgba(255, 255, 255, .25), 0 0 0 3.5px rgba(10, 132, 255, .6);
+}
+
+/* ---------- FAQ ---------- */
+
+.faq { display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 7fr); gap: 64px; align-items: start; }
+.faq-head { display: grid; gap: 16px; color: var(--muted); position: sticky; top: 120px; }
+.faq-head h2 { color: var(--text); }
+.faq-list { border-top: 1px solid var(--hair-strong); }
+details { border-bottom: 1px solid var(--hair-strong); }
+summary {
+  list-style: none; cursor: pointer;
+  display: flex; justify-content: space-between; align-items: center; gap: 24px;
+  min-height: 68px; padding: 12px 4px;
+  font-size: 1.125rem; font-weight: 600; letter-spacing: -.012em;
+  transition: color .2s var(--ease);
+}
+summary::-webkit-details-marker { display: none; }
+summary::after {
+  /* A plus drawn as two 2 px bars; open, the vertical bar folds away and leaves a minus. */
+  content: ""; flex: none; width: 14px; height: 14px; color: var(--dim);
+  background:
+    linear-gradient(currentColor, currentColor) center / 14px 2px no-repeat,
+    linear-gradient(currentColor, currentColor) center / 2px 14px no-repeat;
+  transition: background-size .25s var(--ease);
+}
+details[open] summary::after { background-size: 14px 2px, 2px 0; }
+summary:hover { color: var(--link); }
+details p { padding: 0 4px 24px; color: var(--muted); max-width: 44rem; }
+
+/* ---------- Closing: the lit screen again, with the glass tiling field ---------- */
+
+.closing {
+  position: relative; isolation: isolate;
+  margin-top: var(--section);
+  min-height: 784px; display: grid; align-items: center;
+  padding: 132px var(--gutter);
+  text-align: center; color: var(--on-field);
+}
+.closing > .field {
+  bottom: var(--inset);
+  background:
+    linear-gradient(62deg, rgba(255, 255, 255, 0) 30%, rgba(255, 255, 255, .07) 44%, rgba(255, 255, 255, 0) 58%),
+    radial-gradient(44% 58% at -2% -4%, rgba(var(--field-sky), .72) 0%, rgba(var(--field-sky), 0) 68%),
+    radial-gradient(56% 70% at 104% 104%, var(--field-teal) 0%, rgba(44, 201, 173, .34) 40%, rgba(44, 201, 173, 0) 72%),
+    radial-gradient(60% 70% at -4% 104%, rgba(124, 156, 255, .46) 0%, rgba(124, 156, 255, 0) 70%),
+    linear-gradient(180deg, var(--field-base) 0%, var(--field-low) 100%);
+}
+/* BetterTile's own motif, drawn on the lit screen: crisp window panes with real 14-unit
+   gutters, a light edge from above, soft depth under each pane, an inner glow in three of them (two sky, one
+   teal) and one divider grip on a shared edge, the brightest detail. Static, aria-hidden. */
+.panes {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  --fade-x: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent);
+  --fade-y: linear-gradient(180deg, transparent, #000 10%, #000 90%, transparent);
+  -webkit-mask-image: radial-gradient(ellipse 84% 90% at 50% 50%, #000 50%, rgba(0, 0, 0, .7) 78%, transparent 100%), var(--fade-x), var(--fade-y);
+  -webkit-mask-composite: source-in, source-in;
+  mask-image: radial-gradient(ellipse 84% 90% at 50% 50%, #000 50%, rgba(0, 0, 0, .7) 78%, transparent 100%), var(--fade-x), var(--fade-y);
+  mask-composite: intersect;
+}
+.panes rect, .panes line { vector-effect: non-scaling-stroke; stroke-width: 1; }
+.panes .f-shade { opacity: .34; }
+.panes .f-glow rect { fill: none; stroke-width: 4; opacity: .5; }
+.panes .f-glow .g-teal { opacity: .85; }
+.panes .f-edge line { stroke-width: 1.5; }
+.panes-narrow, .panes-phone { display: none; }
+.closing-inner { display: grid; justify-items: center; gap: 36px; }
+/* The lit screen spills a little cobalt light onto the desk below it, as in the hero. */
+.closing::after {
+  content: ""; position: absolute; z-index: -2; left: 10%; right: 10%; bottom: -60px; height: 160px;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(49, 92, 244, .3), rgba(49, 92, 244, .06) 60%, transparent);
+  filter: blur(36px); pointer-events: none;
+}
+.closing-icon { width: 112px; height: 112px; filter: drop-shadow(0 18px 28px rgba(4, 8, 50, .45)); }
+/* Grows a little slower than the wide field, so its one line clears the panes beside it from 1141px up. */
+.closing h2 { font-size: clamp(2.25rem, .3rem + 3.9vw, 4rem); line-height: 1.02; font-weight: 660; letter-spacing: -.034em; }
+.closing .req { text-align: left; }
+.download-note { margin-top: -12px; font-size: var(--t-small); color: var(--on-field-2); text-wrap: balance; }
+.download-note a {
+  color: #fff; font-weight: 600; text-underline-offset: 3px; white-space: nowrap;
+  position: relative; z-index: 1; padding-block: calc((44px - 1.2em) / 2 + 1px);
+}
+/* The 44px hit area is padding, so a ring on the link itself would cut through the line above. The ring is
+   drawn around the words instead. */
+.download-note a:focus-visible { outline: none; }
+.download-note a:focus-visible span { outline: 2px solid #fff; outline-offset: 1px; border-radius: 4px; }
+
+/* The compact field takes over before the wide field's teal pane can reach the headline. */
+@media (max-width: 1140px) {
+  .closing { min-height: 720px; padding: 120px var(--gutter); }
+  .panes-wide { display: none; }
+  /* The compact mask: no side fade, so the side columns keep their crisp edges; short top and bottom fades. */
+  .panes-narrow, .panes-phone {
+    --fade: radial-gradient(ellipse 84% 72% at 50% 50%, #000 56%, rgba(0, 0, 0, .72) 80%, transparent 100%);
+    -webkit-mask-image: var(--fade), linear-gradient(180deg, transparent, #000 32px, #000 calc(100% - 32px), transparent);
+    -webkit-mask-composite: source-in;
+    mask-image: var(--fade), linear-gradient(180deg, transparent, #000 32px, #000 calc(100% - 32px), transparent);
+    mask-composite: intersect; }
+  .panes-narrow { display: block; }
+  .closing-icon { width: 96px; height: 96px; }
+  .closing-inner { gap: 30px; }
+  .closing .action { flex-direction: column; align-items: center; }
+  .closing .action .req { text-align: center; padding-left: 0; box-shadow: none; }
+  .download-note { max-width: 17em; }
+  .closing h2 { max-width: 9.5em; font-size: clamp(2.25rem, 1.2rem + 3vw, 2.5rem); }
+}
+
+/* ---------- Footer ---------- */
+
+.footer { padding: 48px 0 48px; color: var(--muted); font-size: var(--t-small); }
+.footer-inner { display: flex; justify-content: space-between; align-items: flex-start; gap: 32px; flex-wrap: wrap; }
+.footer-brand { display: grid; gap: 6px; }
+.footer-brand .brand { margin: 0; }
+.footer-links { display: grid; grid-template-columns: repeat(2, minmax(10rem, auto)); gap: 0 56px; }
+.footer-label { margin-bottom: 4px; font-size: var(--t-fine); font-weight: 600; color: var(--dim); }
+.footer-links ul { list-style: none; padding: 0; }
+.footer-links a {
+  display: inline-flex; align-items: center; min-height: 44px;
+  text-decoration: none; color: var(--muted); border-radius: 8px;
+}
+.footer-links a:hover { color: var(--text); text-decoration: underline; text-underline-offset: 4px; }
+.fine { margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--hair); color: var(--dim); font-size: var(--t-fine); }
+
+/* ---------- Responsive (1024 / 820 / 600) ---------- */
+
+@media (max-width: 1024px) {
+  .split-head, .feature-row, .feature-row-flip, .faq, .privacy-row { grid-template-columns: 1fr; gap: 28px; }
+  .feature-row .media { order: 2; }
+  .item-wide { grid-template-columns: 1fr; gap: 0; padding: 0; }
+  .item-wide .item-copy h3 { margin-top: 24px; font-size: var(--t-h3); letter-spacing: -.018em; }
+  .steps { grid-template-columns: 1fr 1fr; gap: 40px 32px; }
+  .steps li:nth-child(2)::after { display: none; }
+  .faq-head { position: static; }
+  .privacy-copy { max-width: 36rem; }
+}
+
+@media (max-width: 820px) {
+  /* Without the script, the links wrap to a second row of the bar and stay reachable. */
+  .bar-inner { flex-wrap: wrap; }
+  .nav { order: 3; width: 100%; justify-content: flex-start; margin: 0 0 0 -4px; }
+  .nav a { padding: 0 10px; }
+  html:not(.js) { scroll-padding-top: 136px; }
+  html:not(.js) .hero { padding-top: 180px; }
+  .js .nav {
+    display: none;
+    position: absolute; top: calc(100% + 8px); left: 0; right: 0;
+    flex-direction: column; align-items: stretch; gap: 0; margin: 0;
+    padding: 8px; border-radius: 18px;
+    /* Opaque: a backdrop filter nested in the glass bar has nothing to sample in Chromium. */
+    background: #0e121c;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08), 0 0 0 1px rgba(255, 255, 255, .08), 0 18px 40px -16px rgba(0, 0, 0, .8);
+  }
+  .js .nav a { min-height: 48px; padding: 0 14px; font-size: 1.0625rem; color: #f5f7fc; }
+  .js .bar-inner { flex-wrap: nowrap; }
+  .bar-inner.open .nav { display: flex; }
+  .menu-btn { display: grid; }
+}
+
+@media (max-width: 600px) {
+  :root { --inset: 6px; --r-surface: 22px; --gutter: 20px; }
+  .bar { padding: 14px var(--gutter) 0; }
+  .bar-inner { padding: 6px 6px 6px 12px; min-height: 56px; border-radius: 16px; }
+  .hero { padding-top: 118px; }
+  html:not(.js) .hero { padding-top: 176px; }
+  .hero > .field { bottom: 92px; }
+  .hero h1 { font-size: min(9.7vw, 2.875rem); line-height: 1.04; letter-spacing: -.036em; }
+  .hero-foot { margin-top: 20px; gap: 28px; }
+  .action { flex-direction: column; align-items: stretch; gap: 14px; width: 100%; }
+  .action .btn { width: 100%; }
+  .req { padding-left: 0; box-shadow: none; text-align: center; }
+  .media-hero { margin-top: 40px; }
+  .media-mat { padding: 6px; border-radius: 16px; }
+  .media-hero .media-frame, .media-hero .media-frame video { border-radius: 10px; }
+  .media-frame { --bezel: 4px; --r-frame: 14px; }
+  .play { right: 10px; bottom: 10px; }
+  .media-hero .play { right: 8px; bottom: 8px; }
+  .modes { grid-template-columns: 1fr; gap: 18px; }
+
+  /* Tour: the pill sits under the film on the plain desk, so it is solid, not glass. */
+  .tour-stage { display: flex; flex-direction: column; align-items: center; }
+  .media-hero .play-tour, .media-hero .play-tour[data-state="playing"] { translate: none; }
+  .play-tour {
+    position: static; margin-top: 12px; min-height: 48px; gap: 10px; padding: 4px 18px 4px 4px;
+    background: #151b27; -webkit-backdrop-filter: none; backdrop-filter: none;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08), 0 0 0 1px rgba(255, 255, 255, .1);
+  }
+  /* The 44 px Pause disc keeps the pill's 48 px of room, so Play shifts nothing. */
+  .play-tour .play-disc { width: 40px; height: 40px; }
+  .play-tour[data-state="playing"] .play-disc { width: auto; height: auto; background: none; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .play-tour[data-state="playing"] .play-label { display: none; }
+  .play-tour[data-state="playing"] { pointer-events: auto; width: 44px; height: 44px; min-height: 44px; padding: 0; gap: 0; justify-content: center; margin-block: 14px 2px; background: #151b27; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08), 0 0 0 1px rgba(255, 255, 255, .1); }
+  .play-tour[data-state="playing"]:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  .play-tour[data-state="playing"]:focus-visible .play-disc { outline: none; }
+  .play-tour:hover, .play-tour[data-state="playing"]:hover { background: #151b27; }
+
+  .grid { grid-template-columns: 1fr; gap: 56px; }
+  .item h3 { margin-top: 20px; }
+
+  .ledger dl > div { grid-template-columns: 1fr; gap: 8px; padding: 18px 20px; }
+
+  .steps { grid-template-columns: 1fr; gap: 0; }
+  .steps li { padding: 0 0 32px 60px; min-height: 40px; }
+  .steps li:last-child { padding-bottom: 0; }
+  .steps li::before { top: -6px; }
+  .steps li:not(:last-child)::after {
+    display: block; top: 46px; bottom: 6px; left: 20px; right: auto; width: 1px; height: auto;
+    background: linear-gradient(180deg, var(--step-line), rgba(157, 181, 255, .05));
+  }
+
+  /* The side gutter is measured from the screen edge, so the full-width Download keeps the text gutter. */
+  .closing { min-height: 720px; padding: 112px calc(var(--inset) + var(--gutter)); }
+  /* Phones: the field is drawn 1:1 and centred, so the side columns keep 146px from the centre line at
+     every phone width. The text stays within 128px of it: 36px headline, 256px Download, 14px requirements. */
+  .panes-narrow { display: none; }
+  .panes-phone { display: block; }
+  .pn-phone {
+    position: absolute; left: 50%; top: 50%; width: 390px; height: 720px; max-width: none;
+    margin: -360px 0 0 -195px; overflow: visible;
+  }
+  .closing h2 { font-size: 2.25rem; }
+  .closing .action .btn { width: 100%; max-width: 256px; }
+  .closing .req { font-size: .875rem; }
+  .closing > .field {
+    background:
+      linear-gradient(62deg, rgba(255, 255, 255, 0) 30%, rgba(255, 255, 255, .07) 44%, rgba(255, 255, 255, 0) 58%),
+      radial-gradient(70% 34% at -2% -4%, rgba(var(--field-sky), .72) 0%, rgba(var(--field-sky), 0) 68%),
+      radial-gradient(80% 36% at 104% 104%, var(--field-teal) 0%, rgba(44, 201, 173, .34) 40%, rgba(44, 201, 173, 0) 72%),
+      radial-gradient(80% 40% at -4% 104%, rgba(124, 156, 255, .46) 0%, rgba(124, 156, 255, 0) 70%),
+      linear-gradient(180deg, var(--field-base) 0%, var(--field-low) 100%);
+  }
+
+  .footer-links { grid-template-columns: auto auto; gap: 0 32px; width: 100%; justify-content: start; }
+  .nav { justify-content: space-between; margin: 0; flex-wrap: wrap; }
+  /* No-JS row: the five links fit the capsule on the content measure. */
+  html:not(.js) .nav a { padding: 0 8px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { transition-duration: .01ms !important; }
+}
