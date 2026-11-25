@@ -1,1 +1,20 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Brand asset export</title><link rel="stylesheet" href="redesign.css"><script type="module" src="export-assets.js"></script></head><body><main class="wrap section"><p class="eyebrow">Brand studio / Asset export</p><h1 style="font-size:60px;margin-top:30px">Vectors to pixels.</h1><p class="body-copy">Run the build after editing the identity, then export the current SVGs here. The export embeds the bundled Inter font for the social image.</p><div class="actions"><button class="button primary" data-export="social-preview,1200,630">Social preview · 1200 × 630</button><button class="button secondary" data-export="favicon,32,32">Favicon · 32</button></div><p role="status" class="body-copy">Save the social file as assets/identity/social-preview.png.</p><p class="body-copy"><a href="brand.html">Back to the brand preview ↗</a></p></main></body></html>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Brand asset export</title><style>/* Base rules from the former site stylesheet, kept here so this tool page stands alone. */
+@font-face{font-family:Inter;src:url('assets/fonts/Inter-latin.woff2') format('woff2');font-weight:100 900;font-display:swap}
+:root{color-scheme:dark;--bg:#07090d;--surface:#11161f;--text:#f5f7fc;--muted:#aab4c4;--line:#282e39;--ui:180ms}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif;-webkit-font-smoothing:antialiased;line-height:1.65;overflow-x:clip}
+button{font:inherit;cursor:pointer;color:inherit}
+a{color:inherit;text-decoration:none}
+p,h1{margin:0}
+p{color:var(--muted)}p+p{margin-top:16px}
+h1{font-weight:660;line-height:1.06;letter-spacing:-.035em;text-wrap:balance;font-size:clamp(46px,4.45vw,68px)}
+.wrap{width:min(1300px,84.6%);margin-inline:auto}
+.section{position:relative;padding-block:100px}
+.section:after{content:"";position:absolute;left:0;right:0;bottom:0;height:1px;pointer-events:none;background:linear-gradient(90deg,transparent,var(--line) 20%,#3a4356 50%,var(--line) 80%,transparent)}
+.body-copy{font-size:17px;line-height:1.75;max-width:490px;margin-top:24px}
+p a{text-decoration:underline;text-underline-offset:4px}
+.button{display:inline-flex;align-items:center;justify-content:center;gap:12px;min-height:48px;padding:12px 22px;border:0;border-radius:8px;font-size:14px;font-weight:600;line-height:1.5;white-space:nowrap;transition:background var(--ui),color var(--ui)}
+.primary{background:linear-gradient(180deg,#3d68ff,#2f57ea);color:#fff;box-shadow:inset 0 1px 0 rgba(255,255,255,.22)}
+.secondary{background:var(--surface);color:var(--text);border:1px solid var(--line)}
+.actions{display:flex;align-items:center;flex-wrap:wrap;gap:18px;margin-top:18px}
+</style><script type="module" src="export-assets.js"></script></head><body><main class="wrap section"><p class="eyebrow">Brand studio / Asset export</p><h1 style="font-size:60px;margin-top:30px">Vectors to pixels.</h1><p class="body-copy">Run the build after editing the identity, then export the current SVGs here. The export embeds the bundled Inter font for the social image.</p><div class="actions"><button class="button primary" data-export="social-preview,1200,630">Social preview · 1200 × 630</button><button class="button secondary" data-export="favicon,32,32">Favicon · 32</button></div><p role="status" class="body-copy">Save the social file as assets/identity/social-preview.png.</p><p class="body-copy"><a href="brand.html">Back to the brand preview ↗</a></p></main></body></html>
