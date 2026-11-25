@@ -3,11 +3,13 @@
 
 import AppKit
 import BetterTileCore
+import BetterTileMacOS
 import SwiftUI
 
 enum SetupPage: Int, CaseIterable, Identifiable {
     case welcome
     case accessibility
+    case mode
     case compatibility
     case features
 
@@ -17,8 +19,9 @@ enum SetupPage: Int, CaseIterable, Identifiable {
         switch self {
         case .welcome: "Welcome"
         case .accessibility: "Accessibility"
+        case .mode: "Starting Mode"
         case .compatibility: "macOS Compatibility"
-        case .features: "Features & Feedback"
+        case .features: "Things to Try"
         }
     }
 
@@ -26,6 +29,7 @@ enum SetupPage: Int, CaseIterable, Identifiable {
         switch diagnosticName.lowercased() {
         case "welcome": self = .welcome
         case "accessibility": self = .accessibility
+        case "mode": self = .mode
         case "compatibility": self = .compatibility
         case "features": self = .features
         default: return nil
@@ -38,11 +42,15 @@ struct SetupAssistantView: View {
 
     @Bindable var model: BetterTileModel
     @State private var page: SetupPage
+    /// Applied at Finish, so Adaptive never rearranges windows while setup is open.
+    @State private var startingMode: LayoutMode
+    @State private var feature: SetupFeature = .snap
     let close: () -> Void
 
     init(model: BetterTileModel, initialPage: SetupPage, close: @escaping () -> Void) {
         self.model = model
         _page = State(initialValue: initialPage)
+        _startingMode = State(initialValue: model.configuration.defaultLayoutMode.availableMode)
         self.close = close
     }
 
@@ -60,7 +68,7 @@ struct SetupAssistantView: View {
             Divider()
             navigation
         }
-        .frame(minWidth: 680, minHeight: 540)
+        .frame(minWidth: 680, minHeight: 560)
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
@@ -97,6 +105,8 @@ struct SetupAssistantView: View {
             welcomePage
         case .accessibility:
             accessibilityPage
+        case .mode:
+            modePage
         case .compatibility:
             compatibilityPage
         case .features:
@@ -105,52 +115,53 @@ struct SetupAssistantView: View {
     }
 
     private var welcomePage: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            HStack(alignment: .center, spacing: 18) {
-                Image(systemName: "rectangle.3.group")
-                    .font(.system(size: 48, weight: .semibold))
-                    .foregroundStyle(.tint)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 8) {
-                        Text("Welcome to BetterTile")
-                            .font(.largeTitle.weight(.semibold))
-                        Text("BETA")
-                            .font(.caption2.weight(.bold))
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 3)
-                            .background(.orange.opacity(0.16), in: Capsule())
-                            .foregroundStyle(.orange)
-                    }
-                    Text("A native macOS window manager that resizes neighboring windows together.")
-                        .font(.title3)
-                        .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Text("Welcome to BetterTile")
+                        .font(.largeTitle.weight(.semibold))
+                    Text("BETA")
+                        .font(.caption2.weight(.bold))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(.orange.opacity(0.16), in: Capsule())
+                        .foregroundStyle(.orange)
                 }
+                Text("Put windows side by side and keep them there, without hunting for gaps or overlaps.")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
-            Text("Setup takes about two minutes. You can close this assistant and return at any time.")
-                .font(.body)
-
             GroupBox {
-                VStack(alignment: .leading, spacing: 15) {
-                    welcomePoint(
-                        "One required permission",
-                        detail: "Accessibility lets BetterTile move and resize the windows you choose.",
-                        symbol: "hand.raised.fill"
-                    )
-                    welcomePoint(
-                        "Private by default",
-                        detail: "Your configuration and window layout information stay on this Mac.",
-                        symbol: "lock.shield.fill"
-                    )
-                    welcomePoint(
-                        "You stay in control",
-                        detail: "The macOS compatibility recommendations are optional and can be skipped.",
-                        symbol: "checklist"
-                    )
+                HStack(alignment: .top, spacing: SettingsSpacing.s4) {
+                    SetupClipView(clip: .hero, caption: "Repair Layout arranges three windows")
+                        .frame(maxWidth: .infinity)
+                    VStack(alignment: .leading, spacing: 14) {
+                        welcomePoint(
+                            "Pick how windows behave",
+                            detail: "Arrange windows yourself, or let BetterTile lay them out. You choose in step 3.",
+                            symbol: "rectangle.split.2x1"
+                        )
+                        welcomePoint(
+                            "One permission",
+                            detail: "Accessibility lets BetterTile move and resize windows. Nothing else is requested.",
+                            symbol: "hand.raised.fill"
+                        )
+                        welcomePoint(
+                            "Stays on this Mac",
+                            detail: "Your settings and window information never leave this computer.",
+                            symbol: "lock.shield.fill"
+                        )
+                    }
+                    .frame(width: 230, alignment: .leading)
                 }
                 .padding(6)
             }
+
+            Text("Setup takes about two minutes. Close it any time; it reopens from the menu bar.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -201,6 +212,68 @@ struct SetupAssistantView: View {
             )
             .font(.callout)
             .foregroundStyle(.secondary)
+        }
+    }
+
+    private var modePage: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("How should BetterTile handle your windows?")
+                    .font(.largeTitle.weight(.semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("Choose a starting mode. Snapping and linked resizing work in every mode.")
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack(alignment: .top, spacing: SettingsSpacing.s3) {
+                ForEach(LayoutMode.availableModes, id: \.self) { mode in
+                    PictureChoice(
+                        mode.title,
+                        detail: mode.setupSummary,
+                        badge: mode == .manual ? "New to tiling" : nil,
+                        isSelected: startingMode == mode,
+                        thumbnailHeight: WindowLayoutSettings.modePictureHeight,
+                        action: { startingMode = mode }
+                    ) {
+                        LayoutGlyphView(.mode(mode), size: 52)
+                            .foregroundStyle(startingMode == mode
+                                ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
+                    }
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+            }
+
+            GroupBox {
+                HStack(alignment: .top, spacing: SettingsSpacing.s4) {
+                    SetupClipView(clip: startingMode.setupClip)
+                        .frame(maxWidth: .infinity)
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(startingMode.title)
+                            .font(.title3.weight(.semibold))
+                        Text(startingMode.setupDescription)
+                            .fixedSize(horizontal: false, vertical: true)
+                        setupFact("Good for", startingMode.setupGoodFor)
+                        setupFact("When you select Finish", startingMode.setupFinishEffect)
+                    }
+                    .frame(width: 210, alignment: .leading)
+                }
+                .padding(6)
+            }
+
+            Text("This mode applies to all desktops. Later, give any desktop its own mode from the menu bar, or change it in Settings ▸ Window Layout.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func setupFact(_ title: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title.uppercased())
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary)
+            Text(value)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -269,69 +342,93 @@ struct SetupAssistantView: View {
 
     private var featuresPage: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("Start arranging your workspace")
-                .font(.largeTitle.weight(.semibold))
-            Text("BetterTile is in beta. Feedback on real workflows will shape what improves next.")
-                .foregroundStyle(.secondary)
-
-            GroupBox {
-                VStack(alignment: .leading, spacing: 14) {
-                    featurePoint(
-                        "Drag snapping",
-                        detail: "Preview an edge or corner zone before releasing a window.",
-                        symbol: "arrow.up.left.and.arrow.down.right"
-                    )
-                    featurePoint(
-                        "Linked resizing",
-                        detail: "Resize neighboring windows together along their shared boundary.",
-                        symbol: "arrow.left.and.right"
-                    )
-                    featurePoint(
-                        "Adaptive layouts",
-                        detail: "Arrange visible windows into a stable split layout that adapts as windows change.",
-                        symbol: "rectangle.split.2x2"
-                    )
-                    featurePoint(
-                        "Keyboard actions",
-                        detail: "Assign conflict-checked shortcuts for common positions, sizes, and displays.",
-                        symbol: "keyboard"
-                    )
-                    featurePoint(
-                        "Placement history",
-                        detail: "Restore a window’s previous BetterTile placement when an action misses the mark.",
-                        symbol: "arrow.uturn.backward"
-                    )
-                }
-                .padding(6)
-            }
-
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Help improve BetterTile")
-                    .font(.headline)
-                Text("Bug reports and feature ideas are public on GitHub and greatly appreciated.")
-                    .font(.callout)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Things to try first")
+                    .font(.largeTitle.weight(.semibold))
+                Text("Select a feature to watch it. Each one works right after setup.")
                     .foregroundStyle(.secondary)
-                HStack(spacing: 10) {
-                    Link(
-                        "Report a Bug",
-                        destination: URL(
-                            string: "https://github.com/LMC-Karma/BetterTile/issues/new?template=bug.yml"
-                        )!
-                    )
-                    Link(
-                        "Suggest an Improvement",
-                        destination: URL(
-                            string: "https://github.com/LMC-Karma/BetterTile/issues/new?template=feature.yml"
-                        )!
-                    )
-                    Link(
-                        "View on GitHub",
-                        destination: URL(string: "https://github.com/LMC-Karma/BetterTile")!
-                    )
-                }
-                .buttonStyle(.bordered)
             }
+
+            HStack(alignment: .top, spacing: SettingsSpacing.s4) {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(SetupFeature.allCases) { item in
+                            featureRow(item)
+                        }
+                    }
+                }
+                .frame(width: 236)
+
+                VStack(alignment: .leading, spacing: 10) {
+                    SetupClipView(clip: feature.clip)
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: "sparkle")
+                            .foregroundStyle(.tint)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("TRY IT NOW")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.tint)
+                            Text(feature.tryIt)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(SettingsColor.fill, in: .settings(SettingsRadius.inner))
+                }
+                .frame(maxWidth: .infinity)
+            }
+
+            HStack(spacing: 10) {
+                Link(destination: URL(string: "https://lmc-karma.github.io/BetterTile/")!) {
+                    Label("Full Guide on the Website", systemImage: "arrow.up.forward.square")
+                }
+                Link(
+                    "Report a Bug",
+                    destination: URL(
+                        string: "https://github.com/LMC-Karma/BetterTile/issues/new?template=bug.yml"
+                    )!
+                )
+                Link(
+                    "Suggest an Improvement",
+                    destination: URL(
+                        string: "https://github.com/LMC-Karma/BetterTile/issues/new?template=feature.yml"
+                    )!
+                )
+            }
+            .buttonStyle(.bordered)
         }
+    }
+
+    private func featureRow(_ item: SetupFeature) -> some View {
+        Button {
+            feature = item
+        } label: {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: item.symbol)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 22, height: 22)
+                    .background(item.tint, in: .settings(SettingsRadius.mini))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(item.title)
+                        .font(.headline)
+                    Text(item.summary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+            .background(
+                feature == item ? AnyShapeStyle(Color.accentColor.opacity(0.14)) : AnyShapeStyle(.clear),
+                in: .settings(SettingsRadius.control)
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     private var navigation: some View {
@@ -354,6 +451,9 @@ struct SetupAssistantView: View {
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
             } else {
+                Label("Starting mode: \(startingMode.title)", systemImage: "rectangle.split.2x1")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 if !model.hasAccessibilityPermission {
                     Label("Accessibility is still required", systemImage: "xmark.circle.fill")
                         .font(.caption)
@@ -419,8 +519,9 @@ struct SetupAssistantView: View {
         model.updateConfiguration {
             $0.setupCompletionVersion = Self.currentVersion
         }
-        model.flushConfiguration()
         close()
+        model.applyStartingMode(startingMode)
+        model.flushConfiguration()
     }
 }
 
@@ -517,6 +618,128 @@ private struct RecommendationCard: View {
                 }
             }
             .padding(6)
+        }
+    }
+}
+
+/// A feature on the Setup Assistant's last page, with the clip that shows it.
+private enum SetupFeature: CaseIterable, Identifiable {
+    case snap, resize, wheel, keys, saved, repair
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .snap: "Snap to edges"
+        case .resize: "Resize together"
+        case .wheel: "Layout Wheel"
+        case .keys: "Keyboard shortcuts"
+        case .saved: "Saved Layouts"
+        case .repair: "Repair Layout"
+        }
+    }
+
+    var summary: String {
+        switch self {
+        case .snap: "Drag a window to an edge or corner"
+        case .resize: "Neighbors follow a shared border"
+        case .wheel: "Pick a position at the pointer"
+        case .keys: "Halves, thirds, quarters, displays"
+        case .saved: "Bring back a whole arrangement"
+        case .repair: "Tidy a messy desktop in one step"
+        }
+    }
+
+    var tryIt: String {
+        switch self {
+        case .snap: "Drag any window to the left edge of the screen. Release when the preview appears."
+        case .resize: "Snap two windows side by side, then drag the border between them."
+        case .wheel: "Hold Control, Option and Shift. The wheel opens at the pointer. Move toward a position and release."
+        case .keys: "Press Control-Option-Left Arrow to move the front window to the left half. Control-Option-Return fills the screen."
+        case .saved: "Arrange a few windows, then choose Save Current Layout in Settings ▸ Saved Layouts. Apply it later from the menu bar."
+        case .repair: "Open the BetterTile menu bar icon and choose Repair Layout."
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .snap: "rectangle.lefthalf.filled"
+        case .resize: "arrow.left.and.right"
+        case .wheel: "circle.circle"
+        case .keys: "keyboard"
+        case .saved: "bookmark"
+        case .repair: "wrench.adjustable"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .snap: .blue
+        case .resize: .teal
+        case .wheel: .purple
+        case .keys: .gray
+        case .saved: .indigo
+        case .repair: .green
+        }
+    }
+
+    var clip: SetupClip {
+        switch self {
+        case .snap: .snap
+        case .resize: .resize
+        case .wheel: .wheel
+        case .keys: .keys
+        case .saved: .saved
+        case .repair: .repair
+        }
+    }
+}
+
+/// The Setup Assistant's words for each starting mode.
+private extension LayoutMode {
+    var setupSummary: String {
+        switch self {
+        case .manual, .linked: "You place windows. BetterTile helps when asked."
+        case .bento: "BetterTile arranges windows side by side."
+        case .tabbed: "Panes that hold windows as tabs."
+        }
+    }
+
+    var setupDescription: String {
+        switch self {
+        case .manual, .linked:
+            "Windows stay where you put them. When you want order, drag a window to a screen edge to snap it, "
+                + "or drag the border between two windows to resize both."
+        case .bento:
+            "BetterTile arranges up to six windows side by side. A new window takes room from the others, "
+                + "and a closed window gives its room back."
+        case .tabbed:
+            "The screen splits into panes. Each pane holds several windows as tabs, so you switch with one "
+                + "click instead of searching for a window."
+        }
+    }
+
+    var setupGoodFor: String {
+        switch self {
+        case .manual, .linked: "Trying BetterTile without changing how you work."
+        case .bento: "Keeping every window visible without arranging them yourself."
+        case .tabbed: "Many windows of a few kinds, such as documents. Works best with Stage Manager off."
+        }
+    }
+
+    var setupFinishEffect: String {
+        switch self {
+        case .manual, .linked: "Nothing moves. Your windows stay where they are."
+        case .bento: "BetterTile arranges the visible windows on each desktop."
+        case .tabbed: "BetterTile puts the visible windows on each desktop into panes as tabs."
+        }
+    }
+
+    var setupClip: SetupClip {
+        switch self {
+        case .manual, .linked: .snap
+        case .bento: .adaptive
+        case .tabbed: .tabbed
         }
     }
 }

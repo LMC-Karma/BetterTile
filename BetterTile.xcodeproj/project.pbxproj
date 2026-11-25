@@ -48,6 +48,7 @@
 		5A0A0000000000000000B006 /* LaunchAtLogin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A0A0000000000000000F006 /* LaunchAtLogin.swift */; };
 		10000000000000000000000A /* LayoutWheelSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000C /* LayoutWheelSettings.swift */; };
 		100000000000000000000007 /* SetupAssistantView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000A /* SetupAssistantView.swift */; };
+		C7C0000000000000000000B1 /* SetupClipPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7C0000000000000000000A1 /* SetupClipPlayer.swift */; };
 		100000000000000000000004 /* BetterTileCore in Frameworks */ = {isa = PBXBuildFile; productRef = 700000000000000000000001 /* BetterTileCore */; };
 		100000000000000000000005 /* BetterTileMacOS in Frameworks */ = {isa = PBXBuildFile; productRef = 700000000000000000000002 /* BetterTileMacOS */; };
 		100000000000000000000006 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000008 /* AppIcon.icon */; };
@@ -59,6 +60,7 @@
 		100000000000000000000013 /* AppIconDarkDebug.icon in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000013 /* AppIconDarkDebug.icon */; };
 		100000000000000000000014 /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000014 /* LICENSE */; };
 		100000000000000000000015 /* THIRD_PARTY_NOTICES.md in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000015 /* THIRD_PARTY_NOTICES.md */; };
+		C7C0000000000000000000B2 /* SetupClips in Resources */ = {isa = PBXBuildFile; fileRef = C7C0000000000000000000A2 /* SetupClips */; };
 		100000000000000000000020 /* ApplicationCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000020 /* ApplicationCatalog.swift */; };
 		100000000000000000000021 /* ApplicationPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000021 /* ApplicationPicker.swift */; };
 		B0A1C2D3E4F5061728394A01 /* RecentApplications.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0A1C2D3E4F5061728394A02 /* RecentApplications.swift */; };
@@ -117,6 +119,7 @@
 		200000000000000000000008 /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = Resources/AppIcon.icon; sourceTree = "<group>"; };
 		200000000000000000000009 /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Signing.xcconfig; sourceTree = "<group>"; };
 		20000000000000000000000A /* SetupAssistantView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetupAssistantView.swift; sourceTree = "<group>"; };
+		C7C0000000000000000000A1 /* SetupClipPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetupClipPlayer.swift; sourceTree = "<group>"; };
 		20000000000000000000000B /* AppIconDebug.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = Resources/AppIconDebug.icon; sourceTree = "<group>"; };
 		200000000000000000000010 /* AppIconIce.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = Resources/AppIconIce.icon; sourceTree = "<group>"; };
 		200000000000000000000011 /* AppIconIceDebug.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = Resources/AppIconIceDebug.icon; sourceTree = "<group>"; };
@@ -124,6 +127,7 @@
 		200000000000000000000013 /* AppIconDarkDebug.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = Resources/AppIconDarkDebug.icon; sourceTree = "<group>"; };
 		200000000000000000000014 /* LICENSE */ = {isa = PBXFileReference; lastKnownFileType = text; path = LICENSE; sourceTree = "<group>"; };
 		200000000000000000000015 /* THIRD_PARTY_NOTICES.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = THIRD_PARTY_NOTICES.md; sourceTree = "<group>"; };
+		C7C0000000000000000000A2 /* SetupClips */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Resources/SetupClips; sourceTree = "<group>"; };
 		200000000000000000000020 /* ApplicationCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationCatalog.swift; sourceTree = "<group>"; };
 		200000000000000000000021 /* ApplicationPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationPicker.swift; sourceTree = "<group>"; };
 		B0A1C2D3E4F5061728394A02 /* RecentApplications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecentApplications.swift; sourceTree = "<group>"; };
@@ -163,6 +167,7 @@
 				200000000000000000000006 /* README.md */,
 				200000000000000000000014 /* LICENSE */,
 				200000000000000000000015 /* THIRD_PARTY_NOTICES.md */,
+				C7C0000000000000000000A2 /* SetupClips */,
 				400000000000000000000003 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -219,6 +224,7 @@
 				C02410240000000000000011 /* LayoutWheelFineTuningSheet.swift */,
 				C02410240000000000000010 /* LayoutWheelAppearanceControls.swift */,
 				20000000000000000000000A /* SetupAssistantView.swift */,
+				C7C0000000000000000000A1 /* SetupClipPlayer.swift */,
 				200000000000000000000007 /* Info.plist */,
 			);
 			name = BetterTileApp;
@@ -309,6 +315,7 @@
 				100000000000000000000009 /* AppIconDebug.icon in Resources */,
 				100000000000000000000014 /* LICENSE in Resources */,
 				100000000000000000000015 /* THIRD_PARTY_NOTICES.md in Resources */,
+				C7C0000000000000000000B2 /* SetupClips in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -368,6 +375,7 @@
 				C02410240000000000000001 /* LayoutWheelFineTuningSheet.swift in Sources */,
 				C02410240000000000000000 /* LayoutWheelAppearanceControls.swift in Sources */,
 				100000000000000000000007 /* SetupAssistantView.swift in Sources */,
+				C7C0000000000000000000B1 /* SetupClipPlayer.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

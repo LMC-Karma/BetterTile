@@ -976,6 +976,27 @@ final class BetterTileModel {
         setMode(mode, on: displayID, focusedWindowID: focused?.displayID == displayID ? focused?.id : nil)
     }
 
+    /// Applies the Setup Assistant's starting mode. The mode becomes the
+    /// default, and each current desktop that still uses the old default
+    /// switches to it. A desktop the user gave another mode keeps that mode.
+    func applyStartingMode(_ mode: LayoutMode) {
+        let mode = mode.availableMode
+        let previous = configuration.defaultLayoutMode.availableMode
+        guard mode != previous else { return }
+        // Sessions must exist before they are compared with the old default.
+        refreshActiveWindows(force: false)
+        let displayIDs = system.displays().map(\.id).filter {
+            (activeMode(for: $0)?.availableMode ?? previous) == previous
+        }
+        updateConfiguration { $0.defaultLayoutMode = mode }
+        guard configuration.defaultLayoutMode == mode else { return }
+        let focused = try? system.focusedWindow()
+        for displayID in displayIDs {
+            setMode(mode, on: displayID,
+                    focusedWindowID: focused?.displayID == displayID ? focused?.id : nil)
+        }
+    }
+
     /// Shared by the menu bar and the captured Layout Wheel desktop.
     private func setMode(_ mode: LayoutMode, on displayID: DisplayID, focusedWindowID: WindowID?) {
         releaseDisplayChangeHoldForUserAction(on: displayID)
