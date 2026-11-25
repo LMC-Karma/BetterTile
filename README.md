@@ -225,6 +225,8 @@ a title bar maximizes the window.
    [How do I verify the download?](#how-do-i-verify-the-download)
 3. Follow BetterTile's explanation to grant **Accessibility** permission.
    BetterTile runs in the menu bar. Its Dock icon is optional and off by default.
+4. Choose a starting mode: **Manual**, **Adaptive**, or **Tabbed**. Setup shows a
+   short clip of each. You can change the mode later from the menu bar.
 
 ### Updates
 
