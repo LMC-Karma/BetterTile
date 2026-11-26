@@ -701,7 +701,7 @@ private extension LayoutMode {
         switch self {
         case .manual, .linked: "You place windows. BetterTile helps when asked."
         case .bento: "BetterTile arranges windows side by side."
-        case .tabbed: "Panes that hold windows as tabs."
+        case .tabbed: "Windows become tabs in one pane."
         }
     }
 
@@ -714,8 +714,8 @@ private extension LayoutMode {
             "BetterTile arranges up to six windows side by side. A new window takes room from the others, "
                 + "and a closed window gives its room back."
         case .tabbed:
-            "The screen splits into panes. Each pane holds several windows as tabs, so you switch with one "
-                + "click instead of searching for a window."
+            "Your windows start as tabs in one pane, so you switch with one click instead of searching "
+                + "for a window. For more panes, choose Layout Gallery from the tab bar\u{2019}s \u{2026} menu."
         }
     }
 
@@ -731,7 +731,7 @@ private extension LayoutMode {
         switch self {
         case .manual, .linked: "Nothing moves. Your windows stay where they are."
         case .bento: "BetterTile arranges the visible windows on each desktop."
-        case .tabbed: "BetterTile puts the visible windows on each desktop into panes as tabs."
+        case .tabbed: "BetterTile puts the visible windows on each desktop into one pane as tabs."
         }
     }
 
