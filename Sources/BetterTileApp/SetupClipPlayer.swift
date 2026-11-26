@@ -10,15 +10,8 @@ import SwiftUI
 enum SetupClip: String, CaseIterable {
     case hero, snap, adaptive, tabbed, resize, wheel, keys, saved, repair
 
-    /// The recordings are 3024 × 1964. Saved Layouts and Repair Layout keep
-    /// the menu bar, because they open BetterTile's menu bar panel. The other
-    /// clips leave out its top 60 pixels.
-    var aspectRatio: CGFloat {
-        switch self {
-        case .saved, .repair: 3024 / 1964
-        case .hero, .snap, .adaptive, .tabbed, .resize, .wheel, .keys: 3024 / 1904
-        }
-    }
+    /// The clips show the whole 3024 × 1964 recording screen, menu bar included.
+    static let aspectRatio: CGFloat = 3024 / 1964
 
     var url: URL? {
         Bundle.main.url(forResource: rawValue, withExtension: "mp4", subdirectory: "SetupClips")
@@ -66,7 +59,7 @@ struct SetupClipView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .aspectRatio(clip.aspectRatio, contentMode: .fit)
+        .aspectRatio(SetupClip.aspectRatio, contentMode: .fit)
         .clipShape(.settings(SettingsRadius.inner))
         .overlay {
             RoundedRectangle.settings(SettingsRadius.inner)
