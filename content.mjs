@@ -3,7 +3,7 @@
 // The one place that decides what every Download button opens. It is the latest-release page, so the site never
 // shows an old disk image or version. After a release uploads the fixed-name asset BetterTile.dmg, change it to
 // 'https://github.com/LMC-Karma/BetterTile/releases/latest/download/BetterTile.dmg' for a direct download.
-export const DOWNLOAD_URL = 'https://github.com/LMC-Karma/BetterTile/releases/latest';
+export const DOWNLOAD_URL = 'https://github.com/LMC-Karma/BetterTile/releases/latest/download/BetterTile.dmg';
 export const brand = {
   name: 'BetterTile', headline: ['Your windows.', 'Working together.'],
   get tagline() { return this.headline.join(' '); },
