@@ -769,8 +769,8 @@ final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
             let window = NSWindow(contentViewController: host)
             window.title = "\(BetterTileVariant.displayName) Setup"
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-            window.contentMinSize = NSSize(width: 680, height: 540)
-            window.setContentSize(NSSize(width: 720, height: 580))
+            window.contentMinSize = NSSize(width: 680, height: 560)
+            window.setContentSize(NSSize(width: 760, height: 680))
             window.isReleasedWhenClosed = false
             ApplicationWindowPresentation.configure(window)
             window.setFrameAutosaveName("BetterTileSetupWindow")
