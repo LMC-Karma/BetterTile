@@ -32,15 +32,15 @@
   menuBtn.hidden = false; // shown only once its handler is attached
 
   // Videos. The markup carries native controls so videos play without JS; the script
-  // swaps them for one quiet button per video. At most one video plays. Feature demos
-  // start in view (the one most in view wins); the tour plays only from its button.
+  // swaps them for one quiet corner button per video. At most one video plays: the tour
+  // and the feature demos start in view (the one most in view wins) and loop.
   // Reduced motion shows posters until the visitor presses Play.
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)');
-  // Each control lives in its video's figure (the tour's sits beside the frame, so phones can show it under the film).
+  // Each control lives in its video's figure.
   const controlOf = (f) => f.closest('figure')?.querySelector('.play');
   const frames = [...document.querySelectorAll('.media-frame')].filter((f) => f.querySelector('video') && controlOf(f));
   const seen = new Map(); // frame -> { ratio, area }
-  const seenControl = new Map(); // frame -> ratio of its control (the tour's sits under the film on phones)
+  const seenControl = new Map(); // frame -> ratio of its control
   let chosen = null;      // a frame the visitor started; it keeps priority only while some part is in view
   const hasIO = 'IntersectionObserver' in window;
   // A frame counts as in view while any part of it, or of its control, is on screen.
@@ -62,19 +62,14 @@
     btn.setAttribute('aria-label', playing ? (btn.dataset.labelPause || 'Pause video') : (btn.dataset.labelPlay || 'Play video'));
   };
 
-  // Back to the start: the poster and the labelled control return, as before the first Play.
-  const rewind = (f) => { const v = f.querySelector('video'); if (!v.paused) v.pause(); v.load(); show(controlOf(f), false); };
-
   const update = () => {
-    // A hand-started video stays "manual" only while in view. Once it leaves, the flag clears,
-    // and a manual-only video (the tour) goes back to its poster and labelled control.
-    if (chosen && !inView(chosen)) { const f = chosen; chosen = null; if (f.manualOnly) rewind(f); }
+    // A hand-started video keeps priority only while in view. Once it leaves, the flag clears.
+    if (chosen && !inView(chosen)) chosen = null;
     let best = chosen;
     if (!best && !reduce.matches) {
       let bestArea = 0;
       frames.forEach((f) => {
         const s = seen.get(f);
-        if (f.manualOnly) return;
         if (s && s.ratio >= 0.45 && s.area > bestArea) { best = f; bestArea = s.area; }
       });
     }
@@ -89,18 +84,11 @@
   frames.forEach((frame) => {
     const video = frame.querySelector('video');
     const btn = controlOf(frame);
-    frame.manualOnly = frame.closest('[data-play="manual"]') !== null;
     frame.userPaused = false; // an explicit Pause; it always wins
     video.controls = false;
     show(btn, false);
     video.addEventListener('play', () => show(btn, true));
     video.addEventListener('pause', () => show(btn, false));
-    // The tour plays once. At its end the manual state clears and the labelled control returns.
-    video.addEventListener('ended', () => {
-      if (chosen === frame) chosen = null;
-      if (frame.manualOnly) rewind(frame); else show(btn, false);
-      update();
-    });
     btn.addEventListener('click', () => {
       if (video.paused) { frame.userPaused = false; chosen = frame; measure(frame); update(); }
       else { frame.userPaused = true; if (chosen === frame) chosen = null; video.pause(); update(); }

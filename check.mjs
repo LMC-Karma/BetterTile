@@ -88,7 +88,7 @@ for (const tag of videos) {
   assert(/\bmuted\b/.test(tag) && /\bplaysinline\b/.test(tag) && /preload="none"/.test(tag) && !/\bautoplay\b/.test(tag),`Silent, inline, lazy video without autoplay: ${tag.slice(0, 80)}`);
   assert(/poster="assets\/media\/[\w-]+\.jpg"/.test(tag),'Each video has a local poster');
 }
-assert(/<figure[^>]*id="tour"[^>]*data-play="manual"/.test(html),'The tour plays only on request');
+assert(/<figure[^>]*id="tour"/.test(html) && !/data-play="manual"/.test(html),'The tour plays in view like the feature demos');
 assert(html.includes('<source src="assets/media/overview.mp4"'),'The tour is the overview video');
 // The app README on main links these anchors and GIFs.
 for (const id of ['overview','features','bento','adaptive','linked','snapping','saved-layouts','tabbed','wheel','keyboard','more','install','privacy','faq'])
