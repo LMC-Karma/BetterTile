@@ -39,7 +39,7 @@
 
 <p align="center">
   Requires an Apple silicon Mac, macOS 26 or later, and Accessibility permission.<br>
-  The public beta is self-signed and not notarized. Read <a href="#install">Install</a> before first launch.
+  Signed with an Apple Developer ID and notarized by Apple.
 </p>
 
 <p align="center">
@@ -217,11 +217,9 @@ a title bar maximizes the window.
 
 1. [Download the latest beta](https://github.com/LMC-Karma/BetterTile/releases/latest).
    Open the `BetterTile-*-beta.dmg` and drag BetterTile into **Applications**.
-2. Launch BetterTile. The beta is signed with the stable, self-signed
-   **BetterTile Beta** certificate. It is **not signed with an Apple Developer ID
-   and is not notarized**. After the first launch attempt, open **System Settings →
-   Privacy & Security** and choose **Open Anyway** after confirming the download
-   came from this repository. To check the download first, see
+2. Launch BetterTile. It is signed with an Apple Developer ID and notarized by
+   Apple, so macOS asks once to confirm that you want to open an app downloaded
+   from the internet. To check the download first, see
    [How do I verify the download?](#how-do-i-verify-the-download)
 3. Follow BetterTile's explanation to grant **Accessibility** permission.
    BetterTile runs in the menu bar. Its Dock icon is optional and off by default.
@@ -235,10 +233,11 @@ It shows release notes and asks before downloading or installing. Turn automatic
 checks off in General Settings, or use **Check for Updates…** at any time.
 
 Sparkle verifies each update's EdDSA signature against a public key built into
-the app. This is separate from the beta's macOS code signature. Public betas
-since 0.4.1 use the same self-signed certificate to preserve Accessibility
-permission across normal updates. If that identity changes, the release notes
-will explain the one-time permission steps.
+the app. This is separate from the app's macOS code signature. Since 0.7.0,
+releases are signed with the same Developer ID, so macOS keeps your
+Accessibility permission across updates. Betas 0.4.1 to 0.6.3 used a
+self-signed certificate; the update to 0.7.0 needs one new Accessibility grant,
+which its release notes explain.
 
 ### Build from source
 
@@ -322,27 +321,23 @@ check that page for current details.
   saved window layouts. Pick them if you prefer their approach. BetterTile's
   Saved Layouts and linked resizing cover similar ground.
 
-BetterTile needs an Apple silicon Mac and macOS 26 or later. Its beta is not
-notarized, and its Tabbed mode needs Stage Manager off. If one of those blocks
-you, pick one of the tools above.
+BetterTile needs an Apple silicon Mac and macOS 26 or later, and its Tabbed mode
+needs Stage Manager off. If one of those blocks you, pick one of the tools
+above.
 
 ## FAQ
 
-### Why is the beta self-signed and not notarized? How do I open it?
+### Is BetterTile notarized?
 
-BetterTile's public beta is signed with a stable, self-signed **BetterTile Beta**
-certificate. It is not an Apple Developer ID certificate, so Apple has not
-notarized it. The stable certificate lets macOS keep your Accessibility
-permission across normal updates. Sparkle also checks each update's EdDSA
-signature against a public key built into the app.
+Yes, since 0.7.0. Releases are signed with an Apple Developer ID and notarized
+by Apple, and each app and disk image carries its notarization ticket. macOS
+opens BetterTile after one confirmation, without **Open Anyway**. Sparkle also
+checks each update's EdDSA signature against a public key built into the app.
 
-To open it the first time:
-
-1. Open the `.dmg` and drag BetterTile into **Applications**.
-2. Open BetterTile. macOS blocks it.
-3. Open **System Settings → Privacy & Security**, scroll to the message about
-   BetterTile, and choose **Open Anyway**.
-4. Grant **Accessibility** permission when BetterTile asks.
+Betas 0.4.1 to 0.6.3 were self-signed. After updating from one of them, grant
+Accessibility once more: in System Settings → Privacy & Security →
+Accessibility, remove the old **BetterTile** entry with **−**, then choose
+**Request Access…** in BetterTile's Setup and turn it on.
 
 ### How do I verify the download?
 

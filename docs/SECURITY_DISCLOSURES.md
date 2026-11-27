@@ -970,20 +970,24 @@ See [icon validation and limits](icon-composer/README.md#finder-metadata-and-sig
 
 ## Distribution
 
-Public beta builds are signed with the maintainer-held, self-signed
-`BetterTile Beta` certificate. Its stable certificate requirement is intended
-to let macOS recognize successive betas as the same application for
-Accessibility. The 0.4.1 beta was the transition from the old ad-hoc identity;
-later releases continue using the stable certificate unless it changes. The
-certificate does not provide Apple developer attestation or notarization, so
-first launch still requires **Open Anyway** in System Settings → Privacy &
-Security. The transition release required one final Accessibility grant.
+Since 0.7.0, public beta builds are signed with the maintainer's Developer ID
+Application certificate (Team ID `2BZVM9DDGQ`), use the hardened runtime with no
+added entitlements, and are notarized by Apple. The app and the disk image
+carry stapled notarization tickets, so Gatekeeper opens them after one
+confirmation. The certificate requirement pins that team, so macOS recognizes
+successive releases as the same application for Accessibility.
+
+Betas 0.4.1 to 0.6.3 used the self-signed `BetterTile Beta` certificate, and
+0.4.1 was the transition from the earlier ad-hoc identity. 0.7.0 is the
+transition to Developer ID: it requires one new Accessibility grant, which its
+release notes explain.
 
 Sparkle independently authenticates update archives with the EdDSA key built
-into the application. The self-signed code-signing certificate and its private
-key are not stored in the repository or CI. Certificate rotation, loss,
-compromise, or expiry breaks the stable application identity and requires a
-warning and focused release tests.
+into the application. That key is separate from the code-signing certificate,
+so the 0.7.0 transition kept the EdDSA key. The Developer ID private key, the
+notarization credentials and their recovery details are not stored in the
+repository or CI. Certificate loss, compromise, or a change of team breaks the
+stable application identity and requires a warning and focused release tests.
 
 The unsigned `CODE_SIGNING_ALLOWED=NO` builds produced by CI and by the release
 script's internal build step are validation builds only and are never
