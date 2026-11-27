@@ -103,6 +103,8 @@ jobs:
         run: Tools/tests/release-appcast-test.sh
       - name: Test release signing policy
         run: Tools/tests/release-signing-policy-test.sh
+      - name: Test release notarization helpers
+        run: Tools/tests/release-notarize-test.sh
       - name: Test release bundled licenses
         run: Tools/tests/release-bundle-test.sh
       - name: Test release Layout Wheel shader check
