@@ -315,8 +315,8 @@ kbd {
 
 /* Hero: a glass mat is the bezel. It has a purpose: wallpaper above, desk below. */
 .media-hero { margin-top: 32px; }
-/* Short desktop windows (1440×800, 1366×768): the headline steps down a size, so the labelled Play on the
-   middle of the poster stays inside the first screen. */
+/* Short desktop windows (1440×800, 1366×768): the headline steps down a size, so most of the tour
+   stays inside the first screen. */
 @media (min-width: 601px) and (max-height: 860px) {
   .hero { padding-top: 104px; }
   .hero h1 { font-size: min(var(--t-display), 4.75rem); }
@@ -326,8 +326,9 @@ kbd {
 }
 /* MacBook windows with the Dock (1440×760, 1440×720): type and spacing step down once more, and from 1240px
    the offer takes two lines instead of three (one row with Download). Only then does the film narrow, and only
-   as much as the window height needs (a height-aware width), so the labelled Play stays 16px+ above the fold.
-   Film width = (window height − 16 − half the pill − the film's top) × 2 × 1384/778, plus the mat. */
+   as much as the window height needs (a height-aware width), so the middle of the film stays 16px+ above the
+   fold and the tour counts as in view. Film width = (window height − 16 − 29 − the film's top) × 2 × 1384/778,
+   plus the mat. */
 @media (min-width: 601px) and (max-height: 780px) {
   .hero { padding-top: 96px; }
   .hero h1 { font-size: min(var(--t-display), 4.25rem); }
@@ -400,46 +401,9 @@ kbd {
 .play[data-state="paused"] .i-pause { display: none; }
 .media-hero .play { right: 14px; bottom: 14px; }
 
-/* The tour's labelled pill (both sources): wide screens over the film's lower left; phones under it. */
+/* The tour plays by itself like the feature demos, with the same corner control. */
 .tour-stage { position: relative; }
 .media-tour .media-frame video { aspect-ratio: 1384 / 778; }
-.play-disc { display: grid; place-items: center; }
-.play-tour {
-  left: 34px; right: auto; bottom: 34px;
-  width: auto; height: auto; min-height: 58px;
-  display: inline-flex; align-items: center; gap: 14px;
-  padding: 6px 24px 6px 6px; border-radius: 999px;
-  background: rgba(12, 17, 34, .86);
-  font: 600 1.0625rem/1 var(--font); letter-spacing: -.01em; white-space: nowrap;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .28), inset 0 0 0 1px rgba(255, 255, 255, .16), 0 10px 30px -8px rgba(4, 8, 30, .7);
-}
-.play-tour:focus-visible { border-radius: 999px; }
-/* Hero: the tour is the first video, so the still invites a play. The labelled pill sits on the middle of
-   the poster, inside the first screen at 1440×900 and 1440×800. */
-.media-hero .play-tour { left: 50%; right: auto; bottom: auto; top: 50%; translate: -50% -50%; }
-.play-tour:hover { background: rgba(14, 20, 40, .92); }
-.play-tour .play-disc { width: 46px; height: 46px; border-radius: 50%; background: #fff; color: #1a2a8f; box-shadow: 0 2px 8px rgba(4, 8, 30, .35); }
-.play-tour[data-state="paused"] .i-play { margin-left: 2px; }
-.play-time { margin-left: 6px; color: #c9d1ea; font-weight: 500; font-variant-numeric: tabular-nums; }
-/* While the tour plays, Pause stays exactly where Play was: the pill keeps its box, its glass and label
-   go, and its white disc becomes a glass Pause disc (46 px) in the same spot. Only the disc takes the
-   pointer, so the rest of the film stays clear. */
-.play-tour[data-state="playing"] {
-  background: none; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none;
-  pointer-events: none;
-}
-.play-tour[data-state="playing"] .play-label { visibility: hidden; }
-.play-tour[data-state="playing"] .play-disc {
-  pointer-events: auto; color: #fff;
-  background: rgba(14, 20, 40, .66);
-  -webkit-backdrop-filter: blur(14px) saturate(160%);
-  backdrop-filter: blur(14px) saturate(160%);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .26), inset 0 0 0 1px rgba(255, 255, 255, .14), 0 2px 10px rgba(8, 12, 30, .3);
-}
-.play-tour[data-state="playing"]:hover { background: none; }
-.play-tour[data-state="playing"]:hover .play-disc { background: rgba(14, 20, 40, .82); }
-.play-tour[data-state="playing"]:focus-visible { outline: none; }
-.play-tour[data-state="playing"]:focus-visible .play-disc { outline: 2px solid #fff; outline-offset: 2px; }
 
 /* Controls that need the script stay hidden until it attaches their handlers. */
 [hidden] { display: none !important; }
@@ -766,23 +730,6 @@ details p { padding: 0 4px 24px; color: var(--muted); max-width: 44rem; }
   .play { right: 10px; bottom: 10px; }
   .media-hero .play { right: 8px; bottom: 8px; }
   .modes { grid-template-columns: 1fr; gap: 18px; }
-
-  /* Tour: the pill sits under the film on the plain desk, so it is solid, not glass. */
-  .tour-stage { display: flex; flex-direction: column; align-items: center; }
-  .media-hero .play-tour, .media-hero .play-tour[data-state="playing"] { translate: none; }
-  .play-tour {
-    position: static; margin-top: 12px; min-height: 48px; gap: 10px; padding: 4px 18px 4px 4px;
-    background: #151b27; -webkit-backdrop-filter: none; backdrop-filter: none;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08), 0 0 0 1px rgba(255, 255, 255, .1);
-  }
-  /* The 44 px Pause disc keeps the pill's 48 px of room, so Play shifts nothing. */
-  .play-tour .play-disc { width: 40px; height: 40px; }
-  .play-tour[data-state="playing"] .play-disc { width: auto; height: auto; background: none; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
-  .play-tour[data-state="playing"] .play-label { display: none; }
-  .play-tour[data-state="playing"] { pointer-events: auto; width: 44px; height: 44px; min-height: 44px; padding: 0; gap: 0; justify-content: center; margin-block: 14px 2px; background: #151b27; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08), 0 0 0 1px rgba(255, 255, 255, .1); }
-  .play-tour[data-state="playing"]:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
-  .play-tour[data-state="playing"]:focus-visible .play-disc { outline: none; }
-  .play-tour:hover, .play-tour[data-state="playing"]:hover { background: #151b27; }
 
   .grid { grid-template-columns: 1fr; gap: 56px; }
   .item h3 { margin-top: 20px; }
