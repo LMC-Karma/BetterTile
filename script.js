@@ -1,5 +1,6 @@
-// BetterTile website: mobile menu and video playback. Nothing else. Play measures its video on click,
-// and the picture and its control both count as "in view".
+// BetterTile website: mobile menu and video playback. Nothing else. The tour autoplays in view;
+// feature demos play only when pressed. Play measures its video on click, and the picture and its
+// control both count as "in view".
 (() => {
   // Menu
   const bar = document.querySelector('.bar-inner');
@@ -32,16 +33,20 @@
   menuBtn.hidden = false; // shown only once its handler is attached
 
   // Videos. The markup carries native controls so videos play without JS; the script
-  // swaps them for one quiet corner button per video. At most one video plays: the tour
-  // and the feature demos start in view (the one most in view wins) and loop.
-  // Reduced motion shows posters until the visitor presses Play.
+  // swaps them for one quiet corner button per video. At most one video plays at a time.
+  // The tour autoplays while it is mostly in view and loops. A feature demo plays only after
+  // the visitor presses Play (on the button or the picture); it loops while any part of it or its
+  // control is in view, pauses on its current frame when it leaves, and does not resume by itself.
+  // A pressed demo pauses the tour, and the tour does not start over it. Reduced motion: the tour
+  // also waits for Play. With preload="none", nothing but the tour loads before a press.
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)');
   // Each control lives in its video's figure.
   const controlOf = (f) => f.closest('figure')?.querySelector('.play');
   const frames = [...document.querySelectorAll('.media-frame')].filter((f) => f.querySelector('video') && controlOf(f));
+  const tour = frames.find((f) => f.closest('#tour')) || null;
   const seen = new Map(); // frame -> { ratio, area }
   const seenControl = new Map(); // frame -> ratio of its control
-  let chosen = null;      // a frame the visitor started; it keeps priority only while some part is in view
+  let chosen = null;      // the frame the visitor pressed Play on; it plays only while some part is in view
   const hasIO = 'IntersectionObserver' in window;
   // A frame counts as in view while any part of it, or of its control, is on screen.
   const inView = (f) => !hasIO || (seen.get(f)?.ratio || 0) > 0 || (seenControl.get(f) || 0) > 0;
@@ -63,19 +68,14 @@
   };
 
   const update = () => {
-    // A hand-started video keeps priority only while in view. Once it leaves, the flag clears.
+    // A pressed video keeps priority only while in view. Once it leaves, it pauses and the flag clears.
     if (chosen && !inView(chosen)) chosen = null;
-    let best = chosen;
-    if (!best && !reduce.matches) {
-      let bestArea = 0;
-      frames.forEach((f) => {
-        const s = seen.get(f);
-        if (s && s.ratio >= 0.45 && s.area > bestArea) { best = f; bestArea = s.area; }
-      });
-    }
+    let best = chosen && !chosen.userPaused ? chosen : null;
+    // Only the tour starts by itself: mostly in view, not paused by hand, no reduced motion.
+    if (!best && tour && !reduce.matches && !tour.userPaused && (seen.get(tour)?.ratio || 0) >= 0.45) best = tour;
     frames.forEach((f) => {
       const v = f.querySelector('video');
-      const play = f === best && !f.userPaused && !document.hidden;
+      const play = f === best && !document.hidden;
       if (play && v.paused) v.play().catch(() => {});
       else if (!play && !v.paused) v.pause();
     });
@@ -89,10 +89,13 @@
     show(btn, false);
     video.addEventListener('play', () => show(btn, true));
     video.addEventListener('pause', () => show(btn, false));
-    btn.addEventListener('click', () => {
+    const toggle = () => {
       if (video.paused) { frame.userPaused = false; chosen = frame; measure(frame); update(); }
       else { frame.userPaused = true; if (chosen === frame) chosen = null; video.pause(); update(); }
-    });
+    };
+    btn.addEventListener('click', toggle);
+    // The picture is a pointer target too; keyboard users press the button.
+    video.addEventListener('click', toggle);
     btn.hidden = false;
   });
 
