@@ -127,9 +127,9 @@ builds make no update requests. See
 
 ## Distribution and updates
 
-Public beta builds are signed with a maintainer-held, self-signed certificate.
-They are not notarized. First launch needs **Open Anyway** in System Settings →
-Privacy & Security.
+Public beta builds are signed with the maintainer's Apple Developer ID
+certificate, use the hardened runtime, and are notarized by Apple. The app and
+the disk image carry stapled notarization tickets.
 
 Sparkle checks every update archive against an EdDSA public key built into the
 app. That check does not depend on the code signature. The signing credentials
