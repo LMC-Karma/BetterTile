@@ -109,7 +109,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     /// Keeps the Dock's strip out of the work area even while the Dock hides.
     /// Owned by the app layer and refreshed from configuration.
     public var leavesSpaceForDock = false
-    private var frameWriteSuspensions: [pid_t: EnhancedUserInterfaceSuspension]?
+    private var enhancedInterface = EnhancedInterfaceLedger<AXUIElement>()
 
     public init() {
         let privateAPIsDisabled = UserDefaults.standard.bool(forKey: "disablePrivateAPIs")
@@ -276,7 +276,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
             // As for a frame write: with enhanced accessibility on, an
             // application can reinterpret the size writes.
             let enhancedUserInterface = suspendEnhancedUserInterfaceIfNeeded(for: element)
-            defer { if frameWriteSuspensions == nil { finish(enhancedUserInterface) } }
+            defer { if !enhancedInterface.isBatching { enhancedInterface.settle(enhancedUserInterface, using: liveEnhancedInterfaceAccess) } }
             AXUIElementSetMessagingTimeout(element, Self.frameWriteMessagingTimeout)
             defer { AXUIElementSetMessagingTimeout(element, 0) }
             minimumSizeLearner.discardClampCandidate(for: id)
@@ -1024,7 +1024,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         // requested frame. Disable it for the duration of the write. The
         // attribute is only ever touched when the application had it enabled.
         let enhancedUserInterface = suspendEnhancedUserInterfaceIfNeeded(for: element)
-        defer { if frameWriteSuspensions == nil { finish(enhancedUserInterface) } }
+        defer { if !enhancedInterface.isBatching { enhancedInterface.settle(enhancedUserInterface, using: liveEnhancedInterfaceAccess) } }
 
         // A frame write deserves more patience than a bulk read. Passing 0
         // returns this element to the process-wide default afterwards.
@@ -1139,7 +1139,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     }
 
     public func beginContinuousWrites() {
-        if continuousWriteDepth == 0, frameWriteSuspensions == nil { frameWriteSuspensions = [:] }
+        if continuousWriteDepth == 0, !enhancedInterface.isBatching { enhancedInterface.openBatch() }
         continuousWriteDepth += 1
     }
 
@@ -1185,9 +1185,7 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         metadata.liveRequestedSizes.removeAll()
         metadata.continuousSettable.removeAll()
         metadata.continuousSizeSettable.removeAll()
-        let suspensions = frameWriteSuspensions ?? [:]
-        frameWriteSuspensions = nil
-        finish(suspensions)
+        enhancedInterface.closeBatch(using: liveEnhancedInterfaceAccess)
     }
 
     public func measuredFrameAfterWrite(for windowID: WindowID) -> BTRect? { metadata.lastWriteReadback[windowID] }
@@ -1517,87 +1515,72 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
     }
 
     public func withFrameWriteBatch(_ updates: () throws -> Void) rethrows {
-        if frameWriteSuspensions != nil { try updates(); return }
+        if enhancedInterface.isBatching { try updates(); return }
         retryPendingEnhancedUserInterfaceRestores()
-        frameWriteSuspensions = [:]
-        defer {
-            let suspensions = frameWriteSuspensions ?? [:]
-            frameWriteSuspensions = nil
-            finish(suspensions)
-        }
+        enhancedInterface.openBatch()
+        defer { enhancedInterface.closeBatch(using: liveEnhancedInterfaceAccess) }
         try updates()
     }
 
-    /// Result of a suspend request. `restore` is a no-op unless BetterTile
-    /// actually disabled the attribute and the policy asks for it back.
-    private struct EnhancedUserInterfaceSuspension {
-        var applicationElement: AXUIElement?
-        var shouldRestore: Bool
-
-        /// Returns false when the application is held as unresponsive or
-        /// did not answer in time; the caller keeps the restore and retries.
-        func restore() -> Bool {
-            guard shouldRestore, let applicationElement else { return true }
-            // Restoring is what makes Chromium rebuild its accessibility tree,
-            // so this is the slowest write in the whole sequence and needs the
-            // full budget rather than the short read default. It is gated, so
-            // a hung application costs nothing here; a refused restore waits
-            // for a later batch, an application event, or the quit.
-            let error = AccessibilityWindowSystem.gatedCall(applicationElement) {
-                AccessibilityWindowSystem.writeEnhancedUserInterface(true, to: applicationElement)
-            }
-            if error == .cannotComplete { return false }
-            guard error != .success else { return true }
-            // Deliberately not thrown: the frame write already succeeded, and
-            // failing it here would roll back a correct placement. Logged
-            // because a silent failure downgrades disableAndRestore to
-            // disableOnly for assistive technology.
-            AccessibilityWindowSystem.log.warning(
-                "Could not restore AXEnhancedUserInterface (\(error.rawValue, privacy: .public))."
-            )
-            return true
-        }
-    }
-
-    /// Restores that waited for an application to answer again, by process.
-    private var pendingEnhancedUserInterfaceRestores: [pid_t: EnhancedUserInterfaceSuspension] = [:]
-
-    private func finish(_ suspension: EnhancedUserInterfaceSuspension) {
-        guard let element = suspension.applicationElement, !suspension.restore() else { return }
-        pendingEnhancedUserInterfaceRestores[Self.processIdentifier(of: element)] = suspension
-    }
-
-    private func finish(_ suspensions: [pid_t: EnhancedUserInterfaceSuspension]) {
-        for (pid, suspension) in suspensions where !suspension.restore() {
-            pendingEnhancedUserInterfaceRestores[pid] = suspension
-        }
-    }
-
-    /// Puts back the setting of every application still waiting, without the
-    /// gate, because no later write will retry it. Only for quitting:
-    /// an application that is still hung costs one frame-write timeout. A
-    /// restore that fails stays pending.
+    /// Switches every application still waiting back on, without the gate, because no later
+    /// write will retry it. Only for quitting: an application that is still hung costs one
+    /// frame-write timeout. A switch back on that fails keeps waiting.
     public func restoreEnhancedUserInterfaceBeforeQuit() {
-        guard !pendingEnhancedUserInterfaceRestores.isEmpty, AXIsProcessTrusted() else { return }
-        let running = Set(NSWorkspace.shared.runningApplications.map(\.processIdentifier))
-        pendingEnhancedUserInterfaceRestores = pendingEnhancedUserInterfaceRestores.filter { pid, suspension in
-            guard running.contains(pid), suspension.shouldRestore,
-                  let element = suspension.applicationElement else { return false }
-            let error = Self.writeEnhancedUserInterface(true, to: element)
-            guard error != .success else { return false }
-            Self.log.warning("Could not restore AXEnhancedUserInterface (\(error.rawValue, privacy: .public)).")
-            return true
-        }
+        guard !enhancedInterface.waiting.isEmpty, AXIsProcessTrusted() else { return }
+        enhancedInterface.switchBackOnBeforeQuit(running: Self.runningProcessIdentifiers, using: liveEnhancedInterfaceAccess)
     }
 
-    /// Puts back the setting of applications that answer again. One that is
-    /// still held keeps waiting; one that quit needs nothing.
+    /// Switches back on the applications that answer again. One that is still held keeps
+    /// waiting; one that quit needs nothing.
     private func retryPendingEnhancedUserInterfaceRestores() {
-        guard !pendingEnhancedUserInterfaceRestores.isEmpty else { return }
-        let running = Set(NSWorkspace.shared.runningApplications.map(\.processIdentifier))
-        let pending = pendingEnhancedUserInterfaceRestores.filter { running.contains($0.key) }
-        pendingEnhancedUserInterfaceRestores = [:]
-        finish(pending)
+        enhancedInterface.retryWaiting(running: Self.runningProcessIdentifiers, using: liveEnhancedInterfaceAccess)
+    }
+
+    private static func runningProcessIdentifiers() -> Set<pid_t> {
+        Set(NSWorkspace.shared.runningApplications.map(\.processIdentifier))
+    }
+
+    private var liveEnhancedInterfaceAccess: LiveEnhancedInterfaceAccess {
+        LiveEnhancedInterfaceAccess(makeApplication: makeApplicationElement(pid:))
+    }
+
+    /// The live Accessibility calls behind `enhancedInterface`.
+    private struct LiveEnhancedInterfaceAccess: EnhancedInterfaceAccess {
+        let makeApplication: (pid_t) -> AXUIElement
+
+        func application(for pid: pid_t) -> AXUIElement { makeApplication(pid) }
+
+        func isEnhanced(_ application: AXUIElement) -> Bool {
+            var rawValue: CFTypeRef?
+            let error = AccessibilityWindowSystem.gatedCall(application) {
+                AXUIElementCopyAttributeValue(
+                    application, AccessibilityWindowSystem.enhancedUserInterfaceAttribute as CFString, &rawValue
+                )
+            }
+            return error == .success ? rawValue as? Bool ?? false : false
+        }
+
+        func write(_ isEnabled: Bool, to application: AXUIElement, gated: Bool) -> AXError {
+            guard gated else { return AccessibilityWindowSystem.writeEnhancedUserInterface(isEnabled, to: application) }
+            return AccessibilityWindowSystem.gatedCall(application) {
+                AccessibilityWindowSystem.writeEnhancedUserInterface(isEnabled, to: application)
+            }
+        }
+
+        func report(_ failure: EnhancedInterfaceFailure, _ error: AXError) {
+            switch failure {
+            case .switchOff:
+                // Only logged: the frame write still goes ahead, and the application is owed no
+                // switch back on because its attribute did not change.
+                AccessibilityWindowSystem.log.warning(
+                    "Could not disable AXEnhancedUserInterface (\(error.rawValue, privacy: .public)); frame may land imprecisely."
+                )
+            case .switchOn:
+                AccessibilityWindowSystem.log.warning(
+                    "Could not restore AXEnhancedUserInterface (\(error.rawValue, privacy: .public))."
+                )
+            }
+        }
     }
 
     /// Both enhanced-accessibility writes run on the application element, which
@@ -1610,9 +1593,8 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
         AXUIElementSetMessagingTimeout(applicationElement, frameWriteMessagingTimeout)
         defer { AXUIElementSetMessagingTimeout(applicationElement, 0) }
         // The disable is not gated: it runs only after a gated read found the
-        // attribute on. The restore is gated and waits in
-        // `pendingEnhancedUserInterfaceRestores`; the last try, when
-        // BetterTile quits, is not gated.
+        // attribute on. The restore is gated and waits in the ledger's
+        // `waiting` list; the last try, when BetterTile quits, is not gated.
         return AXUIElementSetAttributeValue(
             applicationElement,
             enhancedUserInterfaceAttribute as CFString,
@@ -1622,41 +1604,10 @@ public final class AccessibilityWindowSystem: TargetedWindowSystem, WindowEventS
 
     private func suspendEnhancedUserInterfaceIfNeeded(
         for window: AXUIElement
-    ) -> EnhancedUserInterfaceSuspension {
+    ) -> EnhancedInterfaceLedger<AXUIElement>.Hold {
         var pid: pid_t = 0
-        guard AXUIElementGetPid(window, &pid) == .success else {
-            return EnhancedUserInterfaceSuspension(applicationElement: nil, shouldRestore: false)
-        }
-        if let existing = frameWriteSuspensions?[pid] { return existing }
-        var suspension = EnhancedUserInterfaceSuspension(applicationElement: nil, shouldRestore: false)
-        defer { frameWriteSuspensions?[pid] = suspension }
-        let applicationElement = makeApplicationElement(pid: pid)
-        let isEnabled: Bool = value(
-            Self.enhancedUserInterfaceAttribute,
-            from: applicationElement
-        ) ?? false
-        let decision = EnhancedUserInterfaceCoordinator.decision(
-            policy: enhancedUserInterfacePolicy,
-            isCurrentlyEnabled: isEnabled
-        )
-        guard decision.shouldDisableBeforeWrite else {
-            return EnhancedUserInterfaceSuspension(applicationElement: nil, shouldRestore: false)
-        }
-        let error = Self.writeEnhancedUserInterface(false, to: applicationElement)
-        if error != .success {
-            // Best effort. A failed disable usually still produces a mostly
-            // correct placement, whereas refusing to move the window at all is
-            // a visible regression. Read-back verification is the real remedy.
-            Self.log.warning(
-                "Could not disable AXEnhancedUserInterface (\(error.rawValue, privacy: .public)); frame may land imprecisely."
-            )
-        }
-        suspension = EnhancedUserInterfaceSuspension(
-            applicationElement: applicationElement,
-            // Only ask for a restore if the disable actually took.
-            shouldRestore: decision.shouldRestoreAfterWrite && error == .success
-        )
-        return suspension
+        guard AXUIElementGetPid(window, &pid) == .success else { return .untouched(0) }
+        return enhancedInterface.suspend(pid: pid, policy: enhancedUserInterfacePolicy, using: liveEnhancedInterfaceAccess)
     }
 
     public func setMinimized(_ minimized: Bool, for windowID: WindowID) throws {

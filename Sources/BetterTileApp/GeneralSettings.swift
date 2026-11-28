@@ -23,7 +23,7 @@ struct GeneralSettings: View {
     @State private var launchAtLoginState: LaunchAtLoginState = .off
     @State private var privacyExpanded = false
     @State private var finderIconUpdateFailed = false
-    @AppStorage(AppAppearance.defaultsKey) private var appearanceRawValue = AppAppearance.system.rawValue
+    @AppStorage(ColorModePreference.defaultsKey) private var appearanceRawValue = ColorModePreference.system.rawValue
     @AppStorage(AppIconStyle.defaultsKey) private var appIconRawValue = AppIconStyle.defaultStyle.rawValue
     @State private var shownLegalDocument: LegalDocument?
 
@@ -201,7 +201,7 @@ struct GeneralSettings: View {
         SettingsGroup("Appearance") {
             SettingsRow("BetterTile appearance", caption: "System follows the macOS appearance.") {
                 Picker("BetterTile appearance", selection: appearanceBinding) {
-                    ForEach(AppAppearance.allCases) { appearance in
+                    ForEach(ColorModePreference.allCases) { appearance in
                         Text(appearance.title).tag(appearance)
                     }
                 }
@@ -408,12 +408,12 @@ struct GeneralSettings: View {
         privacyExpanded = true
     }
 
-    private var appearanceBinding: Binding<AppAppearance> {
+    private var appearanceBinding: Binding<ColorModePreference> {
         Binding(
-            get: { AppAppearance(rawValue: appearanceRawValue) ?? .system },
+            get: { ColorModePreference(rawValue: appearanceRawValue) ?? .system },
             set: { appearance in
                 appearanceRawValue = appearance.rawValue
-                AppAppearance.apply(appearance)
+                ColorModePreference.apply(appearance)
             }
         )
     }
