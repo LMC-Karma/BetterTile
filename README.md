@@ -344,8 +344,9 @@ Setup and turn it on.
 
 ### How do I verify the download?
 
-Check who signed the app. Drag BetterTile into **Applications**, then run this
-before you open it:
+Check who signed the app. Releases from 0.7.0 on are signed with BetterTile's
+Developer ID and notarized by Apple. Drag BetterTile into **Applications**, then
+run this before you open it:
 
 ```sh
 spctl -a -vv /Applications/BetterTile.app
@@ -354,7 +355,8 @@ spctl -a -vv /Applications/BetterTile.app
 The output must say `accepted` and `source=Notarized Developer ID`. The
 `origin` line must end with `(2BZVM9DDGQ)`, BetterTile's Apple Team ID. An app
 signed by another team is not an official BetterTile release, even when macOS
-accepts it. To print only the Team ID, run
+accepts it. Earlier releases, including 0.5.2 for Intel Macs, were self-signed,
+so this check does not apply to them; use the checksum below. To print only the Team ID, run
 `codesign -dv /Applications/BetterTile.app 2>&1 | grep TeamIdentifier`. It must
 print `TeamIdentifier=2BZVM9DDGQ`.
 
