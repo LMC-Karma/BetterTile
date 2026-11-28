@@ -257,9 +257,9 @@ kbd {
 /* A faint corner of the closing's tiled desktop, so the two screens are the same desktop. It sits right of the
    headline and above the offer, below the header capsule, and fades before any text or the film. */
 .hero-panes {
-  position: absolute; top: 96px; right: 0; width: min(460px, 32%); height: auto;
-  --fade-x: linear-gradient(90deg, transparent, #000 46%);
-  --fade-y: linear-gradient(180deg, transparent, #000 16%, #000 34%, transparent 60%);
+  position: absolute; top: 28px; right: 0; width: min(700px, 48%); height: auto;
+  --fade-x: linear-gradient(90deg, transparent 22%, #000 54%);
+  --fade-y: linear-gradient(180deg, transparent 4%, #000 20%, #000 38%, transparent 58%);
   -webkit-mask-image: var(--fade-x), var(--fade-y);
   -webkit-mask-composite: source-in;
   mask-image: var(--fade-x), var(--fade-y);
@@ -322,7 +322,7 @@ kbd {
   .hero h1 { font-size: min(var(--t-display), 4.75rem); }
   .hero-foot { margin-top: 24px; }
   .media-hero { margin-top: 24px; }
-  .hero-panes { top: 84px; width: min(400px, 28%); }
+  .hero-panes { top: 20px; width: min(620px, 44%); }
 }
 /* MacBook windows with the Dock (1440×760, 1440×720): type and spacing step down once more, and from 1240px
    the offer takes two lines instead of three (one row with Download). Only then does the film narrow, and only
@@ -334,7 +334,7 @@ kbd {
   .hero h1 { font-size: min(var(--t-display), 4.25rem); }
   .hero-foot { margin-top: 20px; }
   /* The offer moves up into the echo's lower panes, so the echo is a little smaller and fades out sooner. */
-  .hero-panes { width: min(380px, 26%); --fade-y: linear-gradient(180deg, transparent, #000 14%, #000 28%, transparent 46%); }
+  .hero-panes { width: min(560px, 40%); --fade-y: linear-gradient(180deg, transparent 4%, #000 20%, #000 34%, transparent 52%); }
   .media-hero {
     margin-top: 20px; margin-inline: auto;
     /* Below 1240px the offer wraps under the headline, so the film starts lower (≤ 450px). */
