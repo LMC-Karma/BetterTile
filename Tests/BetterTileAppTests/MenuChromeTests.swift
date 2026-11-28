@@ -102,7 +102,10 @@ import Testing
         let settings = AXProbe.frame(try #require(panel.button(labelled: "Settings")))
         let quit = AXProbe.frame(try #require(panel.button(labelled: "Quit")))
         let content = MenuPanelMetrics.width - 2 * MenuPanelMetrics.padding
-        #expect(abs(settings.width - quit.width) < 0.5)
+        // The two faces split the row after the 7 pt gap; when that leaves an odd width, layout rounds
+        // one face up by a point, so the widths may differ by at most 1 pt. The span check below still
+        // pins the pair to the full content width.
+        #expect(abs(settings.width - quit.width) <= 1)
         #expect(abs(quit.minX - settings.maxX - 7) < 0.5)
         #expect(abs(settings.height - 28) < 0.5 && abs(quit.height - 28) < 0.5)
         #expect(abs(quit.maxX - settings.minX - content) < 0.5, "Faces span \(quit.maxX - settings.minX) pt")
