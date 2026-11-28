@@ -44,7 +44,9 @@ fixes.
 
 In scope:
 
-- the BetterTile app and its update path
+- the official BetterTile app, the copy published on this repository's
+  [releases page](https://github.com/LMC-Karma/BetterTile/releases), and its
+  update path
 - BetterTile's handling of its configuration, Saved Layouts, and other local
   files
 - the release and CI configuration in this repository
@@ -58,6 +60,10 @@ Out of scope:
 - a flaw in macOS, in another application, or in Sparkle itself. Report these to
   Apple, to the application's maker, or to the
   [Sparkle project](https://github.com/sparkle-project/Sparkle).
+- a copy of BetterTile that this project did not publish, such as a modified
+  build, a fork, or a download from another site. BetterTile is open source, so
+  anyone may build and share their own copy. The project is responsible only for
+  the copies it publishes.
 - a report with no demonstrated effect on security or privacy
 
 ## Security and privacy commitments
