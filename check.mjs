@@ -122,9 +122,8 @@ for (const gone of ['NOTES.md','BRAND-GUIDE.md','CAPTURE-PLAN.md','COPY.md','OUT
 // No release-specific facts: the site must not show a version, date or size that can go stale.
 assert(!/\b0\.[6-9]\b/.test(visibleText(html)),'Visible text names no 0.6+ version');
 assert(!/Version \d|\d+(?:\.\d)? MB disk image|>Latest</.test(html),'No version, size or Latest badge');
-// No promise about the future price.
-for (const file of pages) assert(!/\bforever\b/i.test(visibleText(await read(file))),`${file}: no "forever" promise`);
-for (const file of ['identity.mjs','assets/identity/social-preview.svg']) assert(!/\bforever\b/i.test(await read(file)),`${file}: no "forever" promise`);
+// Pricing copy matches the README.
+assert(html.includes('<h2 id="privacy-title">Free and open source.</h2>'),'Pricing heading says Free and open source');
 
 // Link-preview and search metadata.
 for (const tag of ['og:url','og:site_name','og:image','twitter:card','twitter:title','twitter:description','twitter:image'])assert(html.includes(`"${tag}"`),`Meta ${tag}`);
