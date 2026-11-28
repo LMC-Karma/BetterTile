@@ -78,7 +78,8 @@ assert(downloadCount>=5,'Download links found');
 // Home page product facts and behaviour.
 assert(html.includes('Apple silicon'),'Page states the Apple silicon requirement');
 assert(html.includes('macOS 26 or later'),'Page states the macOS requirement');
-assert(html.includes('notariz'),'Install steps explain the missing notarization');
+assert(html.includes('notarized by Apple'),'Install steps say the app is notarized');
+assert(!/Open(?:&nbsp;|\s)Anyway/.test(html),'No Open Anyway step remains');
 assert(html.includes('Update checks'),'Privacy copy explains update checks');
 assert(!/\b(?:Bento|ghost preview)\b/i.test(visibleText(html)),'Visible copy uses Adaptive and Resize Preview');
 assert(!/theme-toggle|data-theme="light"/.test(html),'Midnight only');
