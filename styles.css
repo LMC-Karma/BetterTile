@@ -266,7 +266,24 @@ kbd {
   mask-composite: intersect;
 }
 .hero-panes rect { vector-effect: non-scaling-stroke; stroke-width: 1; }
-@media (max-width: 900px) { .hero-panes { display: none; } }
+/* Tablets: the headline is narrower, so the echo sits to its right and fades before the offer. */
+@media (min-width: 601px) and (max-width: 900px) {
+  .hero-panes {
+    top: 24px; width: min(440px, 52%);
+    --fade-x: linear-gradient(90deg, transparent 40%, #000 62%);
+  }
+}
+/* Phones: only a corner peeks out, right of "Your windows." and just below the header; it fades out before
+   the headline's second line. */
+@media (max-width: 600px) {
+  .hero-panes {
+    top: 0; right: -40px; width: 360px; max-width: none;
+    --fade-x: linear-gradient(90deg, transparent 50%, #000 70%);
+    --fade-y: linear-gradient(180deg, transparent 8%, #000 20%, #000 30%, transparent 44%);
+  }
+  /* A small corner needs crisper lines to read. */
+  .hero-panes g { stroke-opacity: .55; }
+}
 .hero-copy { color: var(--on-field); }
 .hero h1 {
   font-size: var(--t-display); line-height: 1; font-weight: 680; letter-spacing: -.038em;
