@@ -440,19 +440,9 @@ code {
 .play[data-state="paused"] .i-play { display: block; }
 .play[data-state="paused"] .i-pause { display: none; }
 .media-hero .play { right: 14px; bottom: 14px; }
-/* Feature demos wait for a press. Paused, their control widens into a lighter "Play" pill, so a
-   still poster reads as playable; the picture is a pointer target too. The tour keeps the quiet circle.
-   The visible word starts the button's accessible name ("Play the … demo"). */
+/* Feature demos wait for a press; their control keeps the same quiet circle as the tour, and the picture is a
+   pointer target too. */
 .js .media-frame video { cursor: pointer; }
-.media:not(.media-hero) .play[data-state="paused"] {
-  width: auto; gap: 6px; padding: 0 16px 0 13px; border-radius: 22px;
-  grid-auto-flow: column; background: rgba(20, 30, 62, .74);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .32), inset 0 0 0 1px rgba(255, 255, 255, .24), 0 2px 12px rgba(8, 12, 30, .4);
-  font: 600 .875rem/1 var(--font); letter-spacing: -.005em;
-}
-.media:not(.media-hero) .play[data-state="paused"]::after { content: "Play"; }
-.media:not(.media-hero) .play[data-state="paused"]:hover { background: rgba(30, 44, 92, .86); }
-.media:not(.media-hero) .play[data-state="paused"]:focus-visible { border-radius: 22px; }
 
 /* The tour plays by itself like the feature demos, with the same corner control. */
 .tour-stage { position: relative; }
