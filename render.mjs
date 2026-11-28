@@ -1,5 +1,5 @@
 // Generated files: brand.html, sitemap.xml, robots.txt and the identity SVGs. It also fills the Download links
-// and the structured data in the hand-authored pages (index.html, acknowledgements.html, 404.html) from content.mjs.
+// and the structured data in the hand-authored pages (index.html, acknowledgements.html, privacy.html, 404.html) from content.mjs.
 import { readFile, writeFile } from 'node:fs/promises';
 import { brand as b, DOWNLOAD_URL } from './content.mjs';
 import { mark, buildIdentity } from './identity.mjs';
@@ -32,12 +32,12 @@ const softwareLd = () => ld({'@context':'https://schema.org','@type':'SoftwareAp
 export const fill = html => html
   .replace(/<a\b[^>]*\bdata-download\b[^>]*>/g, tag => tag.replace(/\bhref="[^"]*"/, `href="${DOWNLOAD_URL}"`))
   .replace(/<script type="application\/ld\+json">[\s\S]*?<\/script>/, softwareLd);
-for (const file of ['index.html','acknowledgements.html','404.html']) {
+for (const file of ['index.html','acknowledgements.html','privacy.html','404.html']) {
   const html = await readFile(file,'utf8'), filled = fill(html);
   if (filled !== html) await writeFile(file, filled);
 }
 
-const sitemap = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${['','acknowledgements.html'].map(path=>`  <url><loc>${absolute(path)}</loc></url>`).join('\n')}\n</urlset>\n`;
+const sitemap = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${['','privacy.html','acknowledgements.html'].map(path=>`  <url><loc>${absolute(path)}</loc></url>`).join('\n')}\n</urlset>\n`;
 const robots = `User-agent: *\nAllow: /\n\nSitemap: ${absolute('sitemap.xml')}\n`;
 
 await buildIdentity();

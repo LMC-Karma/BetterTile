@@ -175,6 +175,19 @@ kbd {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .1), inset 0 -1.5px 0 rgba(0, 0, 0, .4), 0 0 0 1px rgba(255, 255, 255, .1);
 }
 
+/* Inline code. System monospace; nothing is downloaded. */
+code {
+  font: 500 .875em/1.4 ui-monospace, "SF Mono", Menlo, monospace; color: var(--text);
+  padding: 1px 5px; border-radius: 6px; background: rgba(255, 255, 255, .07);
+  overflow-wrap: anywhere;
+}
+
+/* Text for assistive technology only, such as the tour's description. */
+.visually-hidden {
+  position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+
 /* ---------- Header: one glass capsule in the midnight tone ---------- */
 
 .bar {
@@ -420,8 +433,11 @@ kbd {
 .play[data-state="paused"] .i-play { display: block; }
 .play[data-state="paused"] .i-pause { display: none; }
 .media-hero .play { right: 14px; bottom: 14px; }
+/* Feature demos wait for a press; their control keeps the same quiet circle as the tour, and the picture is a
+   pointer target too. */
+.js .media-frame video { cursor: pointer; }
 
-/* The tour plays by itself like the feature demos, with the same corner control. */
+/* The tour plays by itself in view; the feature demos wait for a press. Both use the same corner control. */
 .tour-stage { position: relative; }
 .media-tour .media-frame video { aspect-ratio: 1384 / 778; }
 
@@ -541,6 +557,7 @@ kbd {
 }
 .steps h3 { font-size: var(--t-h3); font-weight: 650; letter-spacing: -.018em; }
 .steps p { margin-top: 8px; color: var(--muted); }
+
 
 /* Step 3: what System Settings shows, in the dark appearance. An illustration, not a control. */
 .sys-card {

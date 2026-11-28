@@ -4,7 +4,7 @@ import { dirname, resolve } from 'node:path';
 import { brand, gifs, DOWNLOAD_URL } from './content.mjs';
 
 const SITE = brand.site; // https://lmc-karma.github.io/BetterTile/
-const pages = ['index.html','brand.html','export.html','social-preview.html','404.html','acknowledgements.html'];
+const pages = ['index.html','brand.html','export.html','social-preview.html','404.html','acknowledgements.html','privacy.html'];
 const stylesheets = ['styles.css','brand-base.css','brand.css'];
 const scripts = ['script.js','export-assets.js'];
 const read = file => readFile(file,'utf8');
@@ -89,8 +89,26 @@ for (const tag of videos) {
   assert(/\bmuted\b/.test(tag) && /\bplaysinline\b/.test(tag) && /preload="none"/.test(tag) && !/\bautoplay\b/.test(tag),`Silent, inline, lazy video without autoplay: ${tag.slice(0, 80)}`);
   assert(/poster="assets\/media\/[\w-]+\.jpg"/.test(tag),'Each video has a local poster');
 }
-assert(/<figure[^>]*id="tour"/.test(html) && !/data-play="manual"/.test(html),'The tour plays in view like the feature demos');
+assert(/<figure[^>]*id="tour"/.test(html) && !/data-play="manual"/.test(html),'The tour plays in view; the feature demos play on press');
 assert(html.includes('<source src="assets/media/overview.mp4"'),'The tour is the overview video');
+// Phones (600 px and narrower) get the small -phone encode; the desktop file stays the fallback after it.
+for (const [, inner] of html.matchAll(/<video\b[^>]*>([\s\S]*?)<\/video>/g)) {
+  const sources = [...inner.matchAll(/<source\b[^>]*>/g)].map(([tag]) => tag);
+  const stem = sources[1]?.match(/src="assets\/media\/([\w-]+)\.mp4"/)?.[1];
+  assert(stem && sources.length === 2 && sources[0] === `<source media="(max-width: 600px)" src="assets/media/${stem}-phone.mp4" type="video/mp4">`,`Phone source before the desktop source: ${sources.join(' ')}`);
+}
+// Every Play/Pause button names its own video.
+const playLabels = [...html.matchAll(/<button class="play"[^>]*>/g)].map(([tag]) => [tag.match(/data-label-play="([^"]+)"/)?.[1], tag.match(/data-label-pause="([^"]+)"/)?.[1]]);
+assert.equal(playLabels.length,12,'One Play/Pause button per video');
+for (const [play,pause] of playLabels) assert(play && pause && pause === play.replace(/^Play/,'Pause'),`Play/Pause labels: ${play} / ${pause}`);
+assert.equal(new Set(playLabels.map(([play]) => play)).size,12,'Play buttons have distinct names');
+// The silent tour has a real text description.
+const tourDescription = html.match(/aria-describedby="([\w-]+)"/)?.[1];
+assert(tourDescription && new RegExp(`<p[^>]*id="${tourDescription}"[^>]*>[^<]{200,}</p>`).test(html),'The tour has a text description');
+// The privacy notice is linked from the home page and the acknowledgements.
+for (const file of ['index.html','acknowledgements.html']) assert((await read(file)).includes('href="privacy.html"'),`${file} links the privacy notice`);
+assert((await read('404.html')).includes(`href="${SITE}privacy.html"`),'404.html links the privacy notice');
+assert((await read('sitemap.xml')).includes(`<loc>${SITE}privacy.html</loc>`),'Sitemap lists the privacy notice');
 // The app README on main links these anchors and GIFs.
 for (const id of ['overview','features','bento','adaptive','linked','snapping','saved-layouts','tabbed','wheel','keyboard','more','install','privacy','faq'])
   assert.equal((html.match(new RegExp(`\\sid="${id}"`,'g'))||[]).length,1,`Anchor #${id}`);
@@ -104,6 +122,9 @@ for (const gone of ['NOTES.md','BRAND-GUIDE.md','CAPTURE-PLAN.md','COPY.md','OUT
 // No release-specific facts: the site must not show a version, date or size that can go stale.
 assert(!/\b0\.[6-9]\b/.test(visibleText(html)),'Visible text names no 0.6+ version');
 assert(!/Version \d|\d+(?:\.\d)? MB disk image|>Latest</.test(html),'No version, size or Latest badge');
+// No promise about the future price.
+for (const file of pages) assert(!/\bforever\b/i.test(visibleText(await read(file))),`${file}: no "forever" promise`);
+for (const file of ['identity.mjs','assets/identity/social-preview.svg']) assert(!/\bforever\b/i.test(await read(file)),`${file}: no "forever" promise`);
 
 // Link-preview and search metadata.
 for (const tag of ['og:url','og:site_name','og:image','twitter:card','twitter:title','twitter:description','twitter:image'])assert(html.includes(`"${tag}"`),`Meta ${tag}`);
