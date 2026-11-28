@@ -1,5 +1,9 @@
 # Third-party notices
 
+BetterTile is distributed under the GNU General Public License v3.0 or later.
+The complete license terms are provided in [LICENSE](LICENSE). This file lists
+the third-party code that BetterTile ships or adapts, with its terms.
+
 ## Sparkle
 
 - Source: <https://github.com/sparkle-project/Sparkle>
@@ -149,32 +153,6 @@ STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
 IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 POSSIBILITY OF SUCH DAMAGE.
 ```
-
-## Vorssaint
-
-- Source: <https://github.com/vorssaint/vorssaint-utils>
-- Copyright: Copyright (C) 2026 Vorssaint
-- License: GNU General Public License v3.0 or later
-
-BetterTile contains portions adapted from Vorssaint's SwiftUI settings and
-menu-panel presentation code: the settings sidebar and its search field, and the
-menu panel's cards and footer buttons. The settings window sources
-`Sources/BetterTileApp/SettingsShell.swift`, `GeneralSettings.swift`,
-`WindowLayoutSettings.swift`, `ShortcutsSettings.swift`,
-`SnapZoneSettings.swift` and `MenuBarSettings.swift` hold the adapted settings
-code, and `Sources/BetterTileApp/BetterTileApp.swift` holds the adapted menu
-panel code. Those files carry Vorssaint's copyright notice. BetterTile modified
-the adapted code.
-
-Vorssaint's demand-based service ownership and teardown patterns informed
-BetterTile's runtime lifecycle, and its `LiquidGlassMixerSlider` and
-`HUDBackdrop` inspired the divider's glass knob and the glass accessibility
-fallback. BetterTile's divider and glass surfaces are its own code; they use
-public Core Animation layers, the Core Image `CIGlassLozenge` filter, and native
-AppKit glass.
-
-BetterTile is distributed under the GNU General Public License v3.0 or later.
-The complete license terms are provided in [LICENSE](LICENSE).
 
 ## Rectangle
 
