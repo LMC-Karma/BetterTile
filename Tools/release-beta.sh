@@ -3,16 +3,30 @@
 set -euo pipefail
 
 usage() {
-    echo "Usage: Tools/release-beta.sh [--dry-run] <version> <notes.md>" >&2
+    echo "Usage: Tools/release-beta.sh [--dry-run [--notarize]] <version> <notes.md>" >&2
     exit 2
 }
 
+# Publication always notarizes. A dry run notarizes only with --notarize; its
+# artifacts are still never published.
 dry_run=false
-if [[ "${1:-}" == "--dry-run" ]]; then
-    dry_run=true
-    shift
-fi
+notarize=true
+dry_run_notarize=false
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --dry-run) dry_run=true; shift ;;
+        --notarize) dry_run_notarize=true; shift ;;
+        -*) usage ;;
+        *) break ;;
+    esac
+done
 [[ $# -eq 2 ]] || usage
+if [[ "$dry_run" == true ]]; then
+    notarize="$dry_run_notarize"
+elif [[ "$dry_run_notarize" == true ]]; then
+    echo "--notarize applies only to --dry-run; publication always notarizes." >&2
+    exit 2
+fi
 
 version="$1"
 notes_path="$2"
@@ -34,15 +48,30 @@ notes_path="$2"
 }
 
 signing_identity="${BETTERTILE_SIGNING_IDENTITY:--}"
-if [[ "$dry_run" == false && "$signing_identity" == "-" ]]; then
-    echo "Public beta publication requires BETTERTILE_SIGNING_IDENTITY to select the stable BetterTile Beta identity." >&2
-    echo "Ad-hoc signing remains available only for dry runs." >&2
+notary_profile="${BETTERTILE_NOTARY_PROFILE:-BetterTile-Notary}"
+if [[ "$notarize" == true && "$signing_identity" == "-" ]]; then
+    echo "Notarization requires BETTERTILE_SIGNING_IDENTITY to select the Developer ID Application identity." >&2
+    echo "Ad-hoc signing remains available only for dry runs without --notarize." >&2
     exit 1
 fi
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
 cd "$repo_root"
+# shellcheck source=lib/release-notarize.sh
+source "$script_dir/lib/release-notarize.sh"
+
+# The Apple Developer Program team whose Developer ID Application certificate
+# signs every distributed BetterTile. Gatekeeper, notarization, and the
+# Accessibility grant all follow this team, so it is pinned here rather than
+# read from the environment.
+expected_team_id="2BZVM9DDGQ"
+if [[ "$signing_identity" != "-" ]]; then
+    is_team_id "$expected_team_id" || {
+        echo "The Developer ID Team ID is not pinned in Tools/release-beta.sh (expected_team_id)." >&2
+        exit 1
+    }
+fi
 notes_path="$(cd "$(dirname "$notes_path")" && pwd)/$(basename "$notes_path")"
 
 xcode_developer_dir="/Applications/Xcode.app/Contents/Developer"
@@ -65,7 +94,8 @@ notes_name="${dmg_name%.dmg}.md"
 artifact_dir="$repo_root/.build/beta-release/$tag"
 feed_url="https://github.com/$repo/releases/latest/download/appcast.xml"
 release_url_prefix="https://github.com/$repo/releases/download/$tag/"
-expected_signing_requirement='identifier "com.lmckarma.BetterTile" and anchor = H"FB3A87AD07238EBCFBBA9125C6D95FE85CFCDFD0"'
+expected_signing_requirement="$(developer_id_requirement com.lmckarma.BetterTile "$expected_team_id")"
+nested_signing_requirement="$(developer_id_team_requirement "$expected_team_id")"
 
 # Build the Xcode application and every DMG-packaging artifact outside the
 # repository. SwiftPM validation continues to use the checkout's normal .build;
@@ -115,6 +145,19 @@ for command in git swift xcodebuild hdiutil shasum ditto curl lipo dwarfdump xml
         exit 1
     }
 done
+
+# Check the signing identity and notary credentials before the long build, so a
+# missing certificate or expired credential fails in seconds, not minutes.
+if [[ "$signing_identity" != "-" ]]; then
+    identities="$(security find-identity -v -p codesigning)"
+    grep -F "$signing_identity" <<< "$identities" | grep '"Developer ID Application: ' >/dev/null || {
+        echo "No valid Developer ID Application identity matches BETTERTILE_SIGNING_IDENTITY." >&2
+        exit 1
+    }
+fi
+if [[ "$notarize" == true ]]; then
+    check_notary_profile "$notary_profile" "$work_dir/notary-profile.err"
+fi
 
 if [[ -e "$artifact_dir" ]]; then
     echo "Artifact directory already exists: $artifact_dir" >&2
@@ -269,23 +312,35 @@ otool -l "$app_path/Contents/MacOS/BetterTile" | awk '
 # macOS reports it as damaged with no "Open Anyway" path, so the beta would be
 # unopenable. Sign inside-out to produce a valid seal.
 #
-# Dry runs default to "-" (ad-hoc). Publication requires the maintainer-held
-# BetterTile Beta identity, and the requirement check below pins its exact
-# certificate rather than trusting the identity's editable Keychain name.
+# Dry runs default to "-" (ad-hoc). Publication requires the maintainer's
+# Developer ID Application identity, and the requirement checks below pin its
+# Team ID rather than trusting the identity's editable Keychain name. A real
+# identity also turns on the hardened runtime and a secure timestamp, which
+# notarization requires; see release_codesign_options.
+codesign_options=()
+while IFS= read -r option; do
+    codesign_options+=("$option")
+done < <(release_codesign_options "$signing_identity")
 sparkle_versions="$app_path/Contents/Frameworks/Sparkle.framework/Versions/B"
-for nested in \
-    "$sparkle_versions/XPCServices/Downloader.xpc" \
-    "$sparkle_versions/XPCServices/Installer.xpc" \
-    "$sparkle_versions/Updater.app" \
-    "$sparkle_versions/Autoupdate" \
-    "$sparkle_versions"; do
+sparkle_components=(
+    "$sparkle_versions/XPCServices/Downloader.xpc"
+    "$sparkle_versions/XPCServices/Installer.xpc"
+    "$sparkle_versions/Updater.app"
+    "$sparkle_versions/Autoupdate"
+    "$sparkle_versions"
+)
+for nested in "${sparkle_components[@]}"; do
     [[ -e "$nested" ]] || {
         echo "Expected Sparkle component is missing: $nested" >&2
         exit 1
     }
-    codesign --force --sign "$signing_identity" "$nested"
+    # Sparkle documents preserving the Downloader service's entitlements.
+    preserve=()
+    [[ "$nested" == *"/Downloader.xpc" ]] && preserve=(--preserve-metadata=entitlements)
+    codesign --force "${codesign_options[@]}" ${preserve[@]+"${preserve[@]}"} \
+        --sign "$signing_identity" "$nested"
 done
-codesign --force --sign "$signing_identity" "$app_path"
+codesign --force "${codesign_options[@]}" --sign "$signing_identity" "$app_path"
 codesign --verify --deep --strict "$app_path"
 # Validate the final signed executable, after Xcode's strip step and signing.
 [[ "$(dwarfdump --uuid "$app_path/Contents/MacOS/BetterTile" | awk '{print $2, $3}')" == "$dsym_uuid" ]] || {
@@ -298,9 +353,33 @@ codesign --verify --deep --strict "$app_path"
 }
 if [[ "$signing_identity" != "-" ]]; then
     codesign --verify --requirement "=$expected_signing_requirement" "$app_path" || {
-        echo "Signed application does not satisfy the pinned BetterTile Beta certificate requirement." >&2
+        echo "Signed application does not satisfy the pinned Developer ID requirement." >&2
         exit 1
     }
+    for nested in "${sparkle_components[@]}"; do
+        codesign --verify --requirement "=$nested_signing_requirement" "$nested" || {
+            echo "Sparkle component is not signed by the pinned Developer ID team: $nested" >&2
+            exit 1
+        }
+    done
+    signature_details="$(codesign -dv "$app_path" 2>&1)"
+    grep '^CodeDirectory .*flags=.*runtime' <<< "$signature_details" >/dev/null || {
+        echo "Signed application does not use the hardened runtime." >&2
+        exit 1
+    }
+fi
+
+# Notarize the application itself and staple its ticket, so a copy dragged out
+# of the disk image passes Gatekeeper offline. The disk image is notarized
+# separately below.
+if [[ "$notarize" == true ]]; then
+    mkdir -p "$work_dir/notarization"
+    ditto -c -k --keepParent "$app_path" "$work_dir/notarization/BetterTile.zip"
+    notarize_submission "$work_dir/notarization/BetterTile.zip" "$notary_profile" \
+        "$work_dir/notarization/app"
+    staple_ticket "$app_path"
+    codesign --verify --deep --strict "$app_path"
+    gatekeeper_accepts exec "$app_path"
 fi
 
 read_info() {
@@ -341,6 +420,22 @@ ln -s /Applications "$stage_dir/Applications"
 hdiutil create -volname "BetterTile $version Beta" -srcfolder "$stage_dir" \
     -ov -format UDZO "$work_dir/$dmg_name"
 
+# Sign, notarize, and staple the disk image before anything records its bytes.
+# Stapling changes the file, so the checksums and the Sparkle EdDSA signature
+# below must be computed only after this step.
+if [[ "$signing_identity" != "-" ]]; then
+    codesign --force --timestamp --sign "$signing_identity" "$work_dir/$dmg_name"
+    codesign --verify --requirement "=$nested_signing_requirement" "$work_dir/$dmg_name" || {
+        echo "The disk image is not signed by the pinned Developer ID team." >&2
+        exit 1
+    }
+fi
+if [[ "$notarize" == true ]]; then
+    notarize_submission "$work_dir/$dmg_name" "$notary_profile" "$work_dir/notarization/dmg"
+    staple_ticket "$work_dir/$dmg_name"
+    gatekeeper_accepts open "$work_dir/$dmg_name"
+fi
+
 mkdir -p "$mount_dir"
 hdiutil attach "$work_dir/$dmg_name" -readonly -nobrowse -mountpoint "$mount_dir" >/dev/null
 [[ -d "$mount_dir/BetterTile.app" && -L "$mount_dir/Applications" ]]
@@ -349,9 +444,16 @@ hdiutil attach "$work_dir/$dmg_name" -readonly -nobrowse -mountpoint "$mount_dir
 codesign --verify --deep --strict "$mount_dir/BetterTile.app"
 if [[ "$signing_identity" != "-" ]]; then
     codesign --verify --requirement "=$expected_signing_requirement" "$mount_dir/BetterTile.app" || {
-        echo "Packaged application does not satisfy the pinned BetterTile Beta certificate requirement." >&2
+        echo "Packaged application does not satisfy the pinned Developer ID requirement." >&2
         exit 1
     }
+fi
+if [[ "$notarize" == true ]]; then
+    xcrun stapler validate "$mount_dir/BetterTile.app" >/dev/null || {
+        echo "The packaged application has no valid stapled ticket." >&2
+        exit 1
+    }
+    gatekeeper_accepts exec "$mount_dir/BetterTile.app"
 fi
 hdiutil detach "$mount_dir" >/dev/null
 rmdir "$mount_dir"
@@ -382,6 +484,10 @@ cp "$work_dir/$dmg_name" "$work_dir/$checksum_name" "$work_dir/$stable_dmg_name"
     "$work_dir/$stable_checksum_name" "$appcast_path" "$artifact_dir/"
 cp "$notes_path" "$artifact_dir/$notes_name"
 ditto "$dsym_path" "$artifact_dir/BetterTile.app.dSYM"
+if [[ -d "$work_dir/notarization" ]]; then
+    mkdir -p "$artifact_dir/notarization"
+    cp "$work_dir"/notarization/*.json "$artifact_dir/notarization/" 2>/dev/null || true
+fi
 
 echo "Validated beta artifacts: $artifact_dir"
 if [[ "$dry_run" == true ]]; then

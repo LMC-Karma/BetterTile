@@ -1,10 +1,10 @@
 # Public beta releases
 
 BetterTile public betas are published as GitHub releases: a DMG containing an
-application signed with the maintainer-held, self-signed `BetterTile Beta`
-certificate. The DMG archive itself carries no Apple code signature; it is
-authenticated separately by the Sparkle **EdDSA signature** recorded in the
-appcast. The app uses Sparkle 2.10.1 to discover and verify later releases. Tags
+application signed with the maintainer's **Developer ID Application**
+certificate and notarized by Apple. The app and the DMG each carry a stapled
+notarization ticket. Sparkle authenticates the DMG separately, with the
+**EdDSA signature** recorded in the appcast. The app uses Sparkle 2.10.1 to discover and verify later releases. Tags
 and release titles carry the beta label; Apple bundle versions remain numeric.
 
 The first release is:
@@ -69,7 +69,7 @@ These are separate and easy to confuse:
 | --- | --- | --- |
 | BetterTile Debug builds from Xcode | the contributor's own Apple Development / Personal Team identity, from the gitignored `Config/LocalSigning.xcconfig` | keeps the separate Debug Accessibility grant across rebuilds |
 | CI, and the build steps inside this script | none — `CODE_SIGNING_ALLOWED=NO` | unsigned validation builds only; never distributed |
-| The published beta | maintainer-held, self-signed `BetterTile Beta`, applied by `Tools/release-beta.sh` | gives successive public betas one stable code-signing identity |
+| The published beta | the maintainer's Developer ID Application certificate, applied by `Tools/release-beta.sh`, then notarized | lets Gatekeeper open the download without **Open Anyway**, and gives successive releases one stable identity |
 
 `Tools/release-beta.sh` is the only place the distributed signature is applied.
 It does not touch `Config/LocalSigning.xcconfig` and does not use a contributor
@@ -80,7 +80,8 @@ identity. See [DEVELOPMENT.md](DEVELOPMENT.md) for the contributor setup.
 The Release build inside the script runs with signing disabled, so the script
 signs the bundle itself, inside-out:
 
-1. `Sparkle.framework/Versions/B/XPCServices/Downloader.xpc`
+1. `Sparkle.framework/Versions/B/XPCServices/Downloader.xpc` (its
+   entitlements are preserved, as Sparkle documents)
 2. `Sparkle.framework/Versions/B/XPCServices/Installer.xpc`
 3. `Sparkle.framework/Versions/B/Updater.app`
 4. `Sparkle.framework/Versions/B/Autoupdate`
@@ -91,35 +92,73 @@ then verifies with `codesign --verify --deep --strict`, both on disk and again
 on the copy inside the mounted DMG.
 
 This is not optional. A bundle with no seal is reported by macOS as *damaged*
-once it carries a quarantine attribute, with no **Open Anyway** path, which
-would make the beta unopenable. Signing also repairs Sparkle's own signature,
-which Xcode's embed step invalidates by stripping the framework's `Headers` and
-`Modules` without re-signing.
+once it carries a quarantine attribute, which would make the release
+unopenable. Signing also repairs Sparkle's own signature, which Xcode's embed
+step invalidates by stripping the framework's `Headers` and `Modules` without
+re-signing.
 
-Dry runs default to ad-hoc signing (`-`). Publication fails unless
-`BETTERTILE_SIGNING_IDENTITY` selects the stable beta identity:
+With a Developer ID identity, every `codesign` call also uses the hardened
+runtime (`--options runtime`) and a secure timestamp (`--timestamp`).
+Notarization requires both. BetterTile needs no hardened-runtime entitlements:
+Accessibility needs none, and the system libraries it opens are Apple-signed.
+
+Dry runs default to ad-hoc signing (`-`) without the hardened runtime. A
+hardened, ad-hoc signed app cannot load an ad-hoc signed framework, because
+library validation requires the same Team ID, and an ad-hoc signature has
+none. Publication fails unless `BETTERTILE_SIGNING_IDENTITY` selects a valid
+Developer ID Application identity in the login Keychain. The name or the
+SHA-1 hash from `security find-identity -v -p codesigning` both work:
 
 ```sh
-BETTERTILE_SIGNING_IDENTITY="BetterTile Beta" Tools/release-beta.sh 0.1.0 notes.md
+BETTERTILE_SIGNING_IDENTITY="Developer ID Application: <Name> (<TEAMID>)" \
+  Tools/release-beta.sh 0.7.0 notes.md
 ```
 
-The release tool also requires the signed app and the copy mounted from the DMG
-to satisfy the pinned BetterTile bundle identifier and certificate requirement.
-A second certificate with the same name does not pass.
+The script pins the Team ID in `expected_team_id`. The signed app, its Sparkle
+components, the DMG, and the app inside the mounted DMG must each satisfy a
+requirement for an Apple-issued Developer ID certificate of that team. The app
+must also carry the `com.lmckarma.BetterTile` identifier. Another certificate
+with the same Keychain name does not pass.
 
-The certificate gives successive releases a stable designated requirement. It
-is intended to let macOS retain one Accessibility grant. The 0.4.1 beta was the
-one-time transition from the old ad-hoc identity; later releases keep that
-identity unless the certificate changes. It is not a Developer ID certificate,
-does not attest an Apple-verified developer identity, and is not notarized.
-Gatekeeper still requires the user to approve the app with **Open
-Anyway** in System Settings → Privacy & Security.
+The certificate gives successive releases a stable designated requirement, so
+macOS keeps one Accessibility grant across updates. A renewed Developer ID
+certificate from the same team satisfies the same requirement. The first
+Developer ID release is a one-time identity change from the self-signed
+`BetterTile Beta` certificate used from 0.4.1 to 0.6.3: users grant
+Accessibility again once, and its release notes must say so. Sparkle accepts
+that update because its EdDSA signature is valid; Sparkle allows a change of
+either the EdDSA key or the code-signing certificate, not both at once.
 
-The 0.4.1 release notes told users to approve the app and re-add BetterTile to
-Accessibility once. Later releases do not require that instruction unless the
-certificate changes. Certificate loss, compromise, expiry, or replacement is
-an identity-breaking event that requires a warning and focused release tests.
-Private key and recovery instructions stay outside this repository.
+Certificate loss, compromise, or a change of team is an identity-breaking event
+that requires a warning and focused release tests. Private keys, credentials,
+and recovery instructions stay outside this repository.
+
+## Notarization
+
+Publication always notarizes. After signing, the script:
+
+1. zips the app with `ditto`, submits it with `xcrun notarytool submit --wait`,
+   and staples the ticket to the app, so a copy dragged out of the DMG passes
+   Gatekeeper offline;
+2. creates the DMG, signs it with the Developer ID identity and a timestamp,
+   submits it, and staples its ticket;
+3. checks both with `xcrun stapler validate` and `spctl --assess`, which must
+   report `source=Notarized Developer ID`, on disk and through the mounted DMG;
+4. only then computes the checksums and the Sparkle EdDSA signature. Stapling
+   changes the DMG's bytes, so a signature made earlier would fail in Sparkle.
+
+`notarytool` reads credentials from a Keychain profile, `BetterTile-Notary` by
+default, or the name in `BETTERTILE_NOTARY_PROFILE`. Create it once on each
+release Mac with `xcrun notarytool store-credentials`. An App Store Connect
+team API key with the Developer role is preferred; an app-specific password also
+works. The script checks the profile before the build and stops at once if it
+is missing or rejected.
+
+A rejected submission stops the release before anything is published, and names
+Apple's log. The script reads the verdict from `notarytool`'s JSON result, not
+its exit status. Each submission's result and log are kept in
+`.build/beta-release/v<version>-beta/notarization/`. Each submission usually
+takes a few minutes.
 
 ## Where release work happens
 
@@ -159,6 +198,8 @@ Only the finished, inspectable artifacts are copied back into
 - `BetterTile-<version>-beta.md` (the release notes as published)
 - `appcast.xml`
 - `BetterTile.app.dSYM` (local symbols; not a published asset)
+- `notarization/` (Apple's submission results and logs, when notarized; not
+  published assets)
 
 DerivedData and the staging tree are intentionally not retained.
 
@@ -197,7 +238,16 @@ signature for the DMG, and records it in the appcast. Dry runs create a fresh
 disposable EdDSA key without accessing the release Keychain. They substitute
 its public key only in the temporary built app before code signing, and pass
 the private seed explicitly to Sparkle. The temporary key is deleted on exit.
-Dry-run artifacts cannot update production installations. Dry runs fetch the
+Dry-run artifacts cannot update production installations. A dry run does not
+notarize unless it is given `--notarize` and a Developer ID identity:
+
+```sh
+BETTERTILE_SIGNING_IDENTITY="Developer ID Application: <Name> (<TEAMID>)" \
+  Tools/release-beta.sh --dry-run --notarize 0.7.0 path/to/notes.md
+```
+
+A notarized dry run submits the build to Apple but publishes nothing. Use it
+before the first release after a signing or notarization change. Dry runs fetch the
 public appcast read-only and reject already published versions or build
 numbers. They keep that feed separate from their generated test appcast so
 production entries are not signed with the disposable key. Never publish their
@@ -231,7 +281,7 @@ clean, current `main`, then run:
 ```sh
 git switch main
 git pull --ff-only origin main
-BETTERTILE_SIGNING_IDENTITY="BetterTile Beta" \
+BETTERTILE_SIGNING_IDENTITY="Developer ID Application: <Name> (<TEAMID>)" \
   Tools/release-beta.sh 0.1.0 path/to/notes.md
 ```
 

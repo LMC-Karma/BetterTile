@@ -23,9 +23,12 @@ failures=0
 pass() { printf '  ok   %s\n' "$1"; }
 fail() { printf '  FAIL %s\n' "$1" >&2; failures=$((failures + 1)); }
 
+# expect_rejection DESCRIPTION IDENTITY EXPECTED_MESSAGE [RELEASE_ARGUMENT...]
 expect_rejection() {
     local description="$1"
     local identity="$2"
+    local expected="$3"
+    shift 3
 
     : > "$spy_log"
     local output
@@ -38,11 +41,11 @@ expect_rejection() {
             else
                 export BETTERTILE_SIGNING_IDENTITY="$identity"
             fi
-            "$release_script" 999.999.999 "$notes"
+            "$release_script" "$@" 999.999.999 "$notes"
         ) 2>&1
     )"; then
         fail "$description"
-    elif [[ "$output" == *"Public beta publication requires BETTERTILE_SIGNING_IDENTITY to select the stable BetterTile Beta identity."* ]]; then
+    elif [[ "$output" == *"$expected"* ]]; then
         pass "$description"
     else
         printf '%s\n' "$output" >&2
@@ -56,9 +59,21 @@ expect_rejection() {
     fi
 }
 
-echo "release publication requires the stable signing identity"
-expect_rejection "rejects a missing signing identity" unset
-expect_rejection "rejects the ad-hoc signing identity" -
+identity_message="Notarization requires BETTERTILE_SIGNING_IDENTITY to select the Developer ID Application identity."
+usage_message="Usage: Tools/release-beta.sh [--dry-run [--notarize]] <version> <notes.md>"
+
+echo "release publication requires the Developer ID identity"
+expect_rejection "rejects a missing signing identity" unset "$identity_message"
+expect_rejection "rejects the ad-hoc signing identity" - "$identity_message"
+
+echo "a notarized dry run requires the Developer ID identity"
+expect_rejection "rejects a notarized dry run without an identity" unset "$identity_message" --dry-run --notarize
+expect_rejection "rejects a notarized ad-hoc dry run" - "$identity_message" --dry-run --notarize
+
+echo "release options"
+expect_rejection "rejects --notarize without --dry-run" unset \
+    "--notarize applies only to --dry-run; publication always notarizes." --notarize
+expect_rejection "rejects an unknown option" unset "$usage_message" --skip-notarization
 
 echo "release tools explain a failed Sparkle key lookup"
 # Run the exact key lookup from the release tool with a generate_keys that
