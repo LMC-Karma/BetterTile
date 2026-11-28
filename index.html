@@ -343,7 +343,7 @@
     <div class="wrap">
       <div class="split-head split-quiet">
         <h2 id="install-title" class="h-quiet">Install the beta</h2>
-        <p class="split-copy">The beta is self-signed, without Apple notarization, so macOS asks you to confirm the first launch. It takes one extra step.</p>
+        <p class="split-copy">BetterTile is signed with an Apple Developer ID and notarized by Apple, so macOS opens it after one confirmation.</p>
       </div>
       <ol class="steps">
         <li>
@@ -354,16 +354,16 @@
           <h3>Drag to Applications</h3>
           <p>Open the disk image and drag BetterTile into your Applications&nbsp;folder.</p>
         </li>
-        <li id="open-anyway">
-          <h3>Open Anyway</h3>
-          <p>Try to open BetterTile once. Then go to System Settings → Privacy &amp; Security and choose Open&nbsp;Anyway.</p>
+        <li id="first-launch">
+          <h3>Open BetterTile</h3>
+          <p>Open BetterTile from Applications. macOS confirms that Apple checked it. Choose&nbsp;Open.</p>
           <div class="sys-card" aria-hidden="true">
-            <div class="sys-title"><span class="sys-lights"><i></i><i></i><i></i></span>Privacy &amp; Security</div>
+            <div class="sys-title"><span class="sys-lights"><i></i><i></i><i></i></span>BetterTile</div>
             <div class="sys-body">
-              <p class="sys-group">Security</p>
+              <p class="sys-group">Downloaded from the internet</p>
               <div class="sys-panel">
-                <p>“BetterTile” was blocked to protect your&nbsp;Mac.</p>
-                <span class="sys-btn">Open Anyway</span>
+                <p>Apple checked it for malicious software and none was&nbsp;detected.</p>
+                <span class="sys-btn">Open</span>
               </div>
             </div>
           </div>
@@ -405,7 +405,11 @@
         </details>
         <details>
           <summary>How do updates work?</summary>
-          <p>BetterTile shows the release notes and asks before it downloads or installs anything. Sparkle verifies an EdDSA signature on each update. This is separate from the beta’s self-signed macOS code signature.</p>
+          <p>BetterTile shows the release notes and asks before it downloads or installs anything. Sparkle verifies an EdDSA signature on each update. This is separate from the app’s Developer ID code signature.</p>
+        </details>
+        <details>
+          <summary>Updating from a self-signed beta?</summary>
+          <p>Earlier betas were self-signed, so after the first notarized update macOS asks for Accessibility once more. In System Settings → Privacy &amp; Security → Accessibility, remove the old BetterTile entry with −. Then choose Request Access… in BetterTile’s Setup and turn it&nbsp;on.</p>
         </details>
         <details>
           <summary>What are the current limits?</summary>
@@ -497,7 +501,7 @@
         </a>
         <p class="req"><span class="req-key">Apple silicon Mac · macOS 26 or later</span> <span>Free and open source · Public beta</span></p>
       </div>
-      <p class="download-note">Self-signed beta. The first launch needs <a href="#open-anyway"><span>Open&nbsp;Anyway</span></a>.</p>
+      <p class="download-note">Signed with Developer ID and notarized by&nbsp;Apple.</p>
     </div>
   </section>
 </main>
