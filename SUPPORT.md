@@ -1,6 +1,6 @@
 # Support
 
-BetterTile is a free project maintained by volunteers. Use this page to find the
+BetterTile is a free, open-source project with one maintainer. Use this page to find the
 fastest way to get help.
 
 ## Get help
@@ -30,8 +30,10 @@ that gets fixed. Include:
 - Your display setup and whether Stage Manager is on.
 - Whether BetterTile has Accessibility permission.
 - A crash report, if BetterTile crashed. macOS saves it as
-  `BetterTile-*.ips` in `~/Library/Logs/DiagnosticReports`. Remove anything
-  you do not want to share before you attach it.
+  `BetterTile-*.ips` in `~/Library/Logs/DiagnosticReports`. Issues are public,
+  and crash reports can contain your Mac user name, device identifiers, and
+  window titles. Read it and replace anything you do not want to share before
+  you attach it.
 
 Do not post window titles, documents, or other private content that you do not
 want to be public.

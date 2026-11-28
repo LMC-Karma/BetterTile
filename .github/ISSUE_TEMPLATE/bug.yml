@@ -86,4 +86,7 @@ body:
       description: >-
         Optional. If BetterTile crashed, macOS saved a report named
         BetterTile-*.ips in ~/Library/Logs/DiagnosticReports. Paste its text here
-        or drag the file into this box. Remove anything you do not want to share first.
+        or drag the file into this box. Issues are public. Crash reports and logs
+        can contain your Mac user name in file paths, device identifiers, and
+        window titles. Before you paste or attach one, read it and replace your
+        user name and anything else you do not want to share.
