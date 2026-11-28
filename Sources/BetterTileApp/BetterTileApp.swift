@@ -71,7 +71,8 @@ final class UpdatePresentationModel {
 }
 #endif
 
-enum AppAppearance: String, CaseIterable, Identifiable {
+/// The System, Light or Dark choice for BetterTile's own windows and popups.
+enum ColorModePreference: String, CaseIterable, Identifiable {
     static let defaultsKey = "BetterTileAppAppearance"
 
     case system
@@ -88,16 +89,24 @@ enum AppAppearance: String, CaseIterable, Identifiable {
         }
     }
 
-    @MainActor
-    static func apply(_ appearance: AppAppearance? = nil) {
-        let selected = appearance
-            ?? UserDefaults.standard.string(forKey: defaultsKey).flatMap(AppAppearance.init(rawValue:))
-            ?? .system
-        NSApp.appearance = switch selected {
+    /// The application-wide override; nil follows macOS.
+    var forcedAppearance: NSAppearance? {
+        switch self {
         case .system: nil
         case .light: NSAppearance(named: .aqua)
         case .dark: NSAppearance(named: .darkAqua)
         }
+    }
+
+    /// The stored choice. A missing or unrecognised value means System.
+    static func stored(in defaults: UserDefaults = .standard) -> Self {
+        defaults.string(forKey: defaultsKey).flatMap(Self.init(rawValue:)) ?? .system
+    }
+
+    /// Applies `choice`, or the stored choice when `choice` is nil, to the whole application.
+    @MainActor
+    static func apply(_ choice: Self? = nil, defaults: UserDefaults = .standard) {
+        NSApp.appearance = (choice ?? stored(in: defaults)).forcedAppearance
     }
 }
 
@@ -326,10 +335,10 @@ final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         modelStarted = true
         model.openSettings = { [weak self] in self?.showSettings() }
         WindowActionGroup.assertComplete()
-        AppAppearance.apply()
+        ColorModePreference.apply()
         AppIconStyle.apply()
         installMainMenu()
-        installStatusItem()
+        createStatusItems()
 #if !DEBUG
         renderUpdateIndicator()
 #endif
@@ -466,24 +475,29 @@ final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         NSApp.terminate(nil)
     }
 
-    private func installStatusItem() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem.autosaveName = "BetterTileMenuBarItem"
-        statusItem.behavior = []
-        guard let button = statusItem.button else { return }
-        button.image = Self.statusImage(availableUpdate: nil)
-        button.target = self
-        button.action = #selector(statusItemClicked)
-        MenuPanelStatusButton.configure(button)
-        button.toolTip = BetterTileVariant.displayName
+    /// Creates the menu bar item that opens the panel, then the Repair Layout item beside it.
+    private func createStatusItems() {
+        let main = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        main.autosaveName = "BetterTileMenuBarItem"
+        main.behavior = []
+        statusItem = main
+        guard let mainButton = main.button else { return }
+#if DEBUG
+        mainButton.image = Self.statusImage(availableUpdate: nil)
+#else
+        mainButton.image = Self.statusImage(availableUpdate: updatePresentation.state.availableUpdate)
+#endif
+        mainButton.target = self
+        mainButton.action = #selector(statusItemClicked)
+        MenuPanelStatusButton.configure(mainButton)
+        mainButton.toolTip = BetterTileVariant.displayName
 
-        repairStatusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        repairStatusItem.autosaveName = "BetterTileRepairMenuBarItem"
-        guard let repairButton = repairStatusItem.button else { return }
-        let repairImage = NSImage(
-            systemSymbolName: "arrow.triangle.2.circlepath",
-            accessibilityDescription: "Repair Layout"
-        )?.withSymbolConfiguration(.init(pointSize: 12, weight: .semibold))
+        let repair = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        repair.autosaveName = "BetterTileRepairMenuBarItem"
+        repairStatusItem = repair
+        guard let repairButton = repair.button else { return }
+        let repairImage = NSImage(systemSymbolName: "arrow.triangle.2.circlepath", accessibilityDescription: "Repair Layout")?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold))
         repairImage?.isTemplate = true
         repairButton.image = repairImage
         repairButton.target = self
@@ -565,7 +579,7 @@ final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
                 closeReason: { [weak self] in self?.menuPanel?.closeReason },
                 onDismiss: { [weak self, weak button] in
                     if let button { MenuPanelStatusButton.setPanelShown(false, on: button) }
-                    self?.removeDismissMonitors()
+                    self?.stopPanelDismissWatchers()
                 })
             controller = MenuPanelController(rootView: panel, appearance: model.configuration.overlayAppearance,
                 onShow: { [weak button] in
@@ -578,7 +592,7 @@ final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
         model.menuPanelWillOpen()
         controller.show(relativeTo: geometry.anchor, visibleFrame: geometry.visibleFrame)
         NSApp.activate(ignoringOtherApps: true)
-        installDismissMonitors()
+        startPanelDismissWatchers()
     }
 
     private func closePopover(reason: MenuPanelCloseReason = .programmatic) {
@@ -589,48 +603,46 @@ final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
 #endif
         menuPanel?.dismiss(reason: reason)
         if let button = statusItem?.button { MenuPanelStatusButton.setPanelShown(false, on: button) }
-        removeDismissMonitors()
+        stopPanelDismissWatchers()
     }
 
-    private func installDismissMonitors() {
-        removeDismissMonitors()
-        globalDismissMonitor = NSEvent.addGlobalMonitorForEvents(
-            matching: [.leftMouseDown, .rightMouseDown]
-        ) { [weak self] event in
-            // AppKit invokes monitors on the main thread. Route mouse-down before the button's mouse-up action.
+    /// Watches clicks and keys that should close the menu panel while it is open.
+    private func startPanelDismissWatchers() {
+        stopPanelDismissWatchers()
+        globalDismissMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                self.menuPanel?.routeGlobalMouseDown(event, isOverStatusItem: self.statusButtonContainsMouse())
+                self.menuPanel?.routeGlobalMouseDown(event, isOverStatusItem: self.pointerIsOverStatusItem())
             }
         }
-        localDismissMonitor = NSEvent.addLocalMonitorForEvents(
-            matching: [.leftMouseDown, .rightMouseDown, .keyDown]
-        ) { [weak self] event in
-            guard let self else { return event }
-            guard let menuPanel else { return event }
-            let excluded = [settingsWindow, setupWindow].contains { candidate in
-                guard let candidate else { return false }
-                return candidate === event.window || (event.type == .keyDown && candidate === NSApp.keyWindow)
+        localDismissMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self] event in
+            // NSEvent is not Sendable, so the routed event leaves the main-actor block through a local.
+            var routed: NSEvent? = event
+            MainActor.assumeIsolated {
+                guard let self, let panel = self.menuPanel else { return }
+                let excluded = MenuPanelDismissRules.comesFromExcludedWindow(
+                    eventWindow: event.window,
+                    isKeyDown: event.type == .keyDown,
+                    keyWindow: NSApp.keyWindow,
+                    excludedWindows: [self.settingsWindow, self.setupWindow].compactMap { $0 })
+                let overStatusItem = event.type != .keyDown && self.pointerIsOverStatusItem()
+                routed = panel.route(event, isExcludedWindow: excluded, isOverStatusItem: overStatusItem)
             }
-            return menuPanel.route(event, isExcludedWindow: excluded, isOverStatusItem: statusButtonContainsMouse())
+            return routed
         }
     }
 
-    private func statusButtonContainsMouse() -> Bool {
+    private func stopPanelDismissWatchers() {
+        if let globalDismissMonitor { NSEvent.removeMonitor(globalDismissMonitor) }
+        if let localDismissMonitor { NSEvent.removeMonitor(localDismissMonitor) }
+        globalDismissMonitor = nil
+        localDismissMonitor = nil
+    }
+
+    private func pointerIsOverStatusItem() -> Bool {
         guard let button = statusItem?.button, let window = button.window else { return false }
         let frame = window.convertToScreen(button.convert(button.bounds, to: nil))
-        return frame.insetBy(dx: -4, dy: -8).contains(NSEvent.mouseLocation)
-    }
-
-    private func removeDismissMonitors() {
-        if let globalDismissMonitor {
-            NSEvent.removeMonitor(globalDismissMonitor)
-            self.globalDismissMonitor = nil
-        }
-        if let localDismissMonitor {
-            NSEvent.removeMonitor(localDismissMonitor)
-            self.localDismissMonitor = nil
-        }
+        return MenuPanelDismissRules.statusItemHitArea(around: frame).contains(NSEvent.mouseLocation)
     }
 
 #if DEBUG
@@ -1004,21 +1016,38 @@ final class BetterTileAppDelegate: NSObject, NSApplicationDelegate, NSWindowDele
 extension BetterTileAppDelegate: SPUUpdaterDelegate, @preconcurrency SPUStandardUserDriverDelegate {}
 #endif
 
-enum PanelSurface {
-    static func base(for scheme: ColorScheme, reduceTransparency: Bool) -> Color {
-        if reduceTransparency {
-            return scheme == .light ? Color(nsColor: .windowBackgroundColor) : Color(white: 0.08)
+/// The two colours shared by the menu panel's raised surfaces: the controls card, the action
+/// tiles, the Settings and Quit buttons, and the Snap Zones selector buttons.
+enum MenuChromePalette {
+    /// Light uses a fixed translucent white; Dark uses the system's fourth fill level.
+    static func raisedSurface(for scheme: ColorScheme) -> AnyShapeStyle {
+        switch scheme {
+        case .dark: AnyShapeStyle(.fill.quaternary)
+        default: AnyShapeStyle(Color.white.opacity(0.52))
         }
-        return scheme == .light ? Color.white.opacity(0.72) : Color.black.opacity(0.48)
     }
 
-    static func card(for scheme: ColorScheme) -> AnyShapeStyle {
-        scheme == .light ? AnyShapeStyle(Color.white.opacity(0.52)) : AnyShapeStyle(.fill.quaternary)
+    /// A hairline that darkens a light surface or lightens a dark one, stronger with Increase Contrast.
+    static func cardBorder(for scheme: ColorScheme, increasedContrast: Bool) -> Color {
+        let ink: Color = scheme == .dark ? .white : .black
+        return ink.opacity(increasedContrast ? 0.24 : 0.11)
+    }
+}
+
+/// The hover and press feedback shared by the menu tiles and the Snap Zones selector buttons.
+enum ChromeButtonFeedback {
+    static func tint(pressed: Bool, hovered: Bool) -> Color {
+        if pressed { return Color.accentColor.opacity(0.2) }
+        if hovered { return Color.accentColor.opacity(0.08) }
+        return .clear
     }
 
-    static func border(for scheme: ColorScheme, increaseContrast: Bool) -> Color {
-        let opacity = increaseContrast ? 0.24 : 0.11
-        return scheme == .light ? Color.black.opacity(opacity) : Color.white.opacity(opacity)
+    static func hoverAnimation(reduceMotion: Bool) -> Animation? {
+        reduceMotion ? nil : .easeOut(duration: 0.18)
+    }
+
+    static func pressAnimation(reduceMotion: Bool) -> Animation? {
+        reduceMotion ? nil : .easeOut(duration: 0.12)
     }
 }
 
@@ -1187,7 +1216,7 @@ struct MenuPanelContent<Actions: View, Notice: View>: View {
             .fixedSize(horizontal: false, vertical: true)
 
             Divider()
-            MenuPanelFooter(openSettings: openSettings, quit: quit)
+            MenuPanelBottomBar(openSettings: openSettings, quit: quit)
         }
         .foregroundStyle(PopupGlass.secondaryText)
         .padding(MenuPanelMetrics.padding)
@@ -1199,6 +1228,27 @@ struct MenuPanelContent<Actions: View, Notice: View>: View {
         } action: { height in
             if abs(chromeHeight - height) > 0.5 { chromeHeight = height }
         }
+    }
+}
+
+/// The geometry and window rules the menu panel's dismiss monitors apply to each event.
+enum MenuPanelDismissRules {
+    /// The status button's screen frame, widened 4 pt each side and heightened 8 pt above and
+    /// below, so a click just beside the icon still counts as a click on it.
+    static func statusItemHitArea(around buttonFrame: NSRect) -> NSRect {
+        buttonFrame.insetBy(dx: -4, dy: -8)
+    }
+
+    /// True when the event belongs to Settings or Setup, which keep the panel open. A key press
+    /// also counts when one of those windows is key.
+    static func comesFromExcludedWindow(
+        eventWindow: NSWindow?, isKeyDown: Bool, keyWindow: NSWindow?, excludedWindows: [NSWindow]
+    ) -> Bool {
+        func isExcluded(_ window: NSWindow?) -> Bool {
+            guard let window else { return false }
+            return excludedWindows.contains { $0 === window }
+        }
+        return isExcluded(eventWindow) || (isKeyDown && isExcluded(keyWindow))
     }
 }
 
@@ -1774,9 +1824,9 @@ struct MenuPanelControls: View {
         .foregroundStyle(PopupGlass.secondaryText)
         .allowsHitTesting(isInteractive)
         .accessibilityHidden(!isInteractive)
-        .panelCard(
+        .chromePlate(
             colorScheme: colorScheme,
-            increaseContrast: colorSchemeContrast == .increased
+            highContrast: colorSchemeContrast == .increased
         )
     }
 }
@@ -1805,7 +1855,7 @@ struct MenuPanelActionButton: View {
                    maxHeight: MenuPanelMetrics.tileHeight, alignment: .leading)
             .contentShape(RoundedRectangle(cornerRadius: 8))
         }
-        .buttonStyle(MenuActionButtonStyle())
+        .buttonStyle(ActionTileButtonStyle())
         .disabled(!isEnabled)
         .accessibilityLabel(action.title)
         .accessibilityValue(shortcut?.displayText ?? "No shortcut")
@@ -1813,35 +1863,45 @@ struct MenuPanelActionButton: View {
     }
 }
 
-struct MenuActionButtonStyle: ButtonStyle {
-    @Environment(\.colorScheme) private var scheme
-    @Environment(\.colorSchemeContrast) private var contrast
-    @Environment(\.isEnabled) private var isEnabled
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var isHovered = false
-
+/// The look of one action tile in the menu panel and in the Menu Bar page's reorder grid.
+struct ActionTileButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .foregroundStyle(PopupGlass.secondaryText)
-            .background {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(PanelSurface.card(for: scheme))
-                    .overlay {
-                        if isEnabled && (isHovered || configuration.isPressed) {
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(Color.accentColor.opacity(configuration.isPressed ? 0.2 : 0.08))
+        Tile(label: configuration.label, isPressed: configuration.isPressed)
+    }
+
+    private struct Tile: View {
+        let label: Configuration.Label
+        let isPressed: Bool
+        @State private var isHovered = false
+        @Environment(\.isEnabled) private var isEnabled
+        @Environment(\.colorScheme) private var colorScheme
+        @Environment(\.colorSchemeContrast) private var contrast
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+        private var outline: RoundedRectangle { RoundedRectangle(cornerRadius: 8, style: .continuous) }
+
+        private var edgeColor: Color {
+            if isEnabled && isHovered { return .accentColor }
+            return MenuChromePalette.cardBorder(for: colorScheme, increasedContrast: contrast == .increased)
+        }
+
+        var body: some View {
+            label
+                .foregroundStyle(PopupGlass.secondaryText)
+                .background {
+                    ZStack {
+                        outline.fill(MenuChromePalette.raisedSurface(for: colorScheme))
+                        if isEnabled {
+                            outline.fill(ChromeButtonFeedback.tint(pressed: isPressed, hovered: isHovered))
                         }
                     }
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(isEnabled && isHovered ? Color.accentColor :
-                        PanelSurface.border(for: scheme, increaseContrast: contrast == .increased))
-            }
-            .opacity(isEnabled ? 1 : 0.5)
-            .onHover { isHovered = $0 }
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: isHovered)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
+                }
+                .overlay { outline.strokeBorder(edgeColor, lineWidth: 1) }
+                .opacity(isEnabled ? 1 : 0.5)
+                .onHover { isHovered = $0 }
+                .animation(ChromeButtonFeedback.hoverAnimation(reduceMotion: reduceMotion), value: isHovered)
+                .animation(ChromeButtonFeedback.pressAnimation(reduceMotion: reduceMotion), value: isPressed)
+        }
     }
 }
 
@@ -1866,56 +1926,68 @@ struct ShortcutLabel: View {
     }
 }
 
-struct MenuPanelFooter: View {
+/// The Settings and Quit buttons at the bottom of the menu panel.
+///
+/// The Menu Bar page preview passes neither callback; the row then still draws but takes no
+/// pointer input and is hidden from accessibility.
+struct MenuPanelBottomBar: View {
     let openSettings: (() -> Void)?
     let quit: (() -> Void)?
 
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
-
-    private var isInteractive: Bool {
-        openSettings != nil || quit != nil
-    }
+    private var isLive: Bool { openSettings != nil || quit != nil }
 
     var body: some View {
         HStack(spacing: 7) {
-            footerButton("Settings", systemImage: "gearshape", action: openSettings)
-            footerButton("Quit", systemImage: "power", action: quit)
+            BottomBarButton(title: "Settings", symbol: "gearshape", run: openSettings)
+            BottomBarButton(title: "Quit", symbol: "power", run: quit)
         }
         .frame(height: 30)
         .padding(.top, 2)
-        .allowsHitTesting(isInteractive)
-        .accessibilityHidden(!isInteractive)
+        .foregroundStyle(PopupGlass.secondaryText)
+        .allowsHitTesting(isLive)
+        .accessibilityHidden(!isLive)
     }
 
-    private func footerButton(
-        _ title: String,
-        systemImage: String,
-        action: (() -> Void)?
-    ) -> some View {
-        Button { action?() } label: {
-            Label(title, systemImage: systemImage)
-                .font(.system(size: 11, weight: .medium))
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, minHeight: 28)
-                .background(
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(PanelSurface.card(for: colorScheme))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .strokeBorder(
-                            PanelSurface.border(
-                                for: colorScheme,
-                                increaseContrast: colorSchemeContrast == .increased
-                            ),
-                            lineWidth: 0.8
-                        )
-                )
-                .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+    private struct BottomBarButton: View {
+        let title: String
+        let symbol: String
+        let run: (() -> Void)?
+        @Environment(\.colorScheme) private var colorScheme
+        @Environment(\.colorSchemeContrast) private var contrast
+
+        var body: some View {
+            Button {
+                run?()
+            } label: {
+                Label(title, systemImage: symbol)
+                    .lineLimit(1)
+                    .font(.system(size: 11, weight: .medium))
+                    .frame(maxWidth: .infinity, minHeight: 28)
+                    .modifier(RaisedKeyFace(scheme: colorScheme, increasedContrast: contrast == .increased))
+            }
+            .buttonStyle(.plain)
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(PopupGlass.secondaryText)
+    }
+
+    /// The rounded, hairline-edged plate behind a bottom-bar button; the whole plate is clickable.
+    private struct RaisedKeyFace: ViewModifier {
+        let scheme: ColorScheme
+        let increasedContrast: Bool
+
+        private var plate: RoundedRectangle { RoundedRectangle(cornerRadius: 7, style: .continuous) }
+
+        func body(content: Content) -> some View {
+            content
+                .overlay {
+                    plate.strokeBorder(
+                        MenuChromePalette.cardBorder(for: scheme, increasedContrast: increasedContrast),
+                        lineWidth: 0.8)
+                }
+                .background {
+                    plate.fill(MenuChromePalette.raisedSurface(for: scheme))
+                }
+                .contentShape(plate)
+        }
     }
 }
 
@@ -1933,23 +2005,25 @@ struct MenuPanelScrollView<Content: View>: NSViewRepresentable {
     }
 }
 
-class MenuPanelNativeScrollView: NSScrollView {
+/// A transparent AppKit scroll view with only a small overlay scroller that hides between scrolls.
+/// The menu panel's action area and the Menu Bar page's reorder grid both use it.
+class ChromelessScrollView: NSScrollView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         drawsBackground = false
         borderType = .noBorder
-        hasVerticalScroller = true
         hasHorizontalScroller = false
+        hasVerticalScroller = true
         autohidesScrollers = true
-        scrollerStyle = .overlay
         automaticallyAdjustsContentInsets = false
+        scrollerStyle = .overlay
         verticalScroller?.controlSize = .small
     }
 
     required init?(coder: NSCoder) { nil }
 }
 
-final class MenuPanelScrollHost<Content: View>: MenuPanelNativeScrollView {
+final class MenuPanelScrollHost<Content: View>: ChromelessScrollView {
     private let host: NSHostingView<AnyView>
     private static var documentWidth: CGFloat {
         MenuPanelMetrics.width - MenuPanelMetrics.padding * 2 + MenuPanelMetrics.scrollContentInset * 2
@@ -1976,20 +2050,25 @@ final class MenuPanelScrollHost<Content: View>: MenuPanelNativeScrollView {
     }
 }
 
-private extension View {
-    func panelCard(colorScheme: ColorScheme, increaseContrast: Bool) -> some View {
-        padding(10)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(PanelSurface.card(for: colorScheme))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(
-                        PanelSurface.border(for: colorScheme, increaseContrast: increaseContrast),
-                        lineWidth: 0.8
-                    )
-            )
+/// The raised plate behind the menu panel's controls card.
+private struct ChromePlate: ViewModifier {
+    let colorScheme: ColorScheme
+    let highContrast: Bool
+
+    func body(content: Content) -> some View {
+        let plate = RoundedRectangle(cornerRadius: 10, style: .continuous)
+        content
+            .padding(10)
+            .background(plate.fill(MenuChromePalette.raisedSurface(for: colorScheme)))
+            .overlay(plate.strokeBorder(
+                MenuChromePalette.cardBorder(for: colorScheme, increasedContrast: highContrast),
+                lineWidth: 0.8))
+    }
+}
+
+extension View {
+    func chromePlate(colorScheme: ColorScheme, highContrast: Bool) -> some View {
+        modifier(ChromePlate(colorScheme: colorScheme, highContrast: highContrast))
     }
 }
 

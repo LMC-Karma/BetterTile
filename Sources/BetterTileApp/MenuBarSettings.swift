@@ -265,8 +265,8 @@ struct MenuActionCollection: NSViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
 
-    func makeNSView(context: Context) -> MenuPanelNativeScrollView {
-        let scroll = MenuPanelNativeScrollView(frame: .zero)
+    func makeNSView(context: Context) -> ChromelessScrollView {
+        let scroll = ChromelessScrollView(frame: .zero)
         let view = MenuReorderCollectionView(frame: NSRect(x: 0, y: 0, width: MenuPanelMetrics.width - MenuPanelMetrics.padding * 2 + MenuPanelMetrics.scrollContentInset * 2, height: 0))
         view.autoresizingMask = [.width]
         let layout = NSCollectionViewFlowLayout()
@@ -296,7 +296,7 @@ struct MenuActionCollection: NSViewRepresentable {
         return scroll
     }
 
-    func updateNSView(_ scroll: MenuPanelNativeScrollView, context: Context) {
+    func updateNSView(_ scroll: ChromelessScrollView, context: Context) {
         guard let view = scroll.documentView as? MenuReorderCollectionView else { return }
         let coordinator = context.coordinator
         let changed = coordinator.parent.actions != actions || coordinator.parent.shortcuts != shortcuts
@@ -306,7 +306,7 @@ struct MenuActionCollection: NSViewRepresentable {
         }
     }
 
-    static func dismantleNSView(_ scroll: MenuPanelNativeScrollView, coordinator: Coordinator) {
+    static func dismantleNSView(_ scroll: ChromelessScrollView, coordinator: Coordinator) {
         (scroll.documentView as? MenuReorderCollectionView)?.stopDragFrames()
     }
 

@@ -57,7 +57,7 @@ import Testing
                 }.padding(.horizontal, 8).frame(width: 156, height: MenuPanelMetrics.tileHeight)
                     .foregroundStyle(.primary)
                     .background(RoundedRectangle(cornerRadius: 8)
-                        .fill(PanelSurface.card(for: dark ? .dark : .light))
+                        .fill(MenuChromePalette.raisedSurface(for: dark ? .dark : .light))
                         .overlay(RoundedRectangle(cornerRadius: 8)
                             .fill(Color.accentColor.opacity(0.2)))))
             } else {

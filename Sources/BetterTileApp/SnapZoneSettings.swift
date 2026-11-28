@@ -384,7 +384,7 @@ private struct SnapZoneDiagram: View {
             )
 
         }
-        .buttonStyle(SnapZoneButtonStyle(isSelected: selectedArea == area))
+        .buttonStyle(ZonePickerButtonStyle(isSelected: selectedArea == area))
         .accessibilityLabel(area.title)
         .accessibilityValue(assignedAction?.title ?? "Disabled")
         .accessibilityAddTraits(selectedArea == area ? .isSelected : [])
@@ -440,35 +440,40 @@ private struct SnapZoneDiagram: View {
     }
 }
 
-/// Preserve the shipped selector surfaces while using the diagram's inner radius.
-private struct SnapZoneButtonStyle: ButtonStyle {
+/// The selector button for one snap area on the Snap Zones page.
+struct ZonePickerButtonStyle: ButtonStyle {
     let isSelected: Bool
-    @Environment(\.colorScheme) private var scheme
-    @Environment(\.colorSchemeContrast) private var contrast
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var isHovered = false
 
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .background {
-                RoundedRectangle.settings(SettingsRadius.inner)
-                    .fill(PanelSurface.card(for: scheme))
-                    .overlay {
-                        if isHovered || configuration.isPressed {
-                            RoundedRectangle.settings(SettingsRadius.inner)
-                                .fill(Color.accentColor.opacity(configuration.isPressed ? 0.2 : 0.08))
-                        }
+        ZoneFace(label: configuration.label, isPressed: configuration.isPressed, isSelected: isSelected)
+    }
+
+    private struct ZoneFace: View {
+        let label: Configuration.Label
+        let isPressed: Bool
+        let isSelected: Bool
+        @State private var isHovered = false
+        @Environment(\.colorScheme) private var colorScheme
+        @Environment(\.colorSchemeContrast) private var contrast
+        @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+        var body: some View {
+            let outline = RoundedRectangle.settings(SettingsRadius.inner)
+            let edge: Color = isSelected || isHovered
+                ? .accentColor
+                : MenuChromePalette.cardBorder(for: colorScheme, increasedContrast: contrast == .increased)
+            label
+                .background {
+                    ZStack {
+                        outline.fill(MenuChromePalette.raisedSurface(for: colorScheme))
+                        outline.fill(ChromeButtonFeedback.tint(pressed: isPressed, hovered: isHovered))
                     }
-            }
-            .overlay {
-                RoundedRectangle.settings(SettingsRadius.inner)
-                    .strokeBorder(isSelected || isHovered ? Color.accentColor :
-                        PanelSurface.border(for: scheme, increaseContrast: contrast == .increased),
-                                  lineWidth: isSelected ? 2 : 1)
-            }
-            .onHover { isHovered = $0 }
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: isHovered)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
+                }
+                .overlay { outline.strokeBorder(edge, lineWidth: isSelected ? 2 : 1) }
+                .onHover { isHovered = $0 }
+                .animation(ChromeButtonFeedback.hoverAnimation(reduceMotion: reduceMotion), value: isHovered)
+                .animation(ChromeButtonFeedback.pressAnimation(reduceMotion: reduceMotion), value: isPressed)
+        }
     }
 }
 

@@ -49,8 +49,8 @@ import Testing
         // controls, action tiles and footer must also establish that role for previews.
         for (name, next) in [("struct MenuPanelContent<", "enum MenuPanelStatusButton"),
                              ("struct MenuPanelControls:", "struct MenuPanelActionButton:"),
-                             ("struct MenuActionButtonStyle:", "struct ShortcutLabel:"),
-                             ("struct MenuPanelFooter:", "struct MenuPanelScrollView<")] {
+                             ("struct ActionTileButtonStyle:", "struct ShortcutLabel:"),
+                             ("struct MenuPanelBottomBar:", "struct MenuPanelScrollView<")] {
             let begin = try #require(source.range(of: name))
             let finish = try #require(source.range(of: next))
             let establishesPrimary = source[begin.lowerBound ..< finish.lowerBound]
@@ -138,14 +138,14 @@ import Testing
     }
 
     @Test(arguments: [false, true])
-    func panelCardUsesSemanticDarkFillAndKeepsLightFill(dark: Bool) throws {
+    func raisedSurfaceUsesSemanticDarkFillAndKeepsLightFill(dark: Bool) throws {
         func pixels(_ style: some ShapeStyle) throws -> Data {
             let renderer = ImageRenderer(content: Rectangle().fill(style).frame(width: 32, height: 32)
                 .environment(\.colorScheme, dark ? .dark : .light))
             let image = try #require(renderer.cgImage)
             return try #require(NSBitmapImageRep(cgImage: image).tiffRepresentation)
         }
-        let actual = try pixels(PanelSurface.card(for: dark ? .dark : .light))
+        let actual = try pixels(MenuChromePalette.raisedSurface(for: dark ? .dark : .light))
         let expected = try dark ? pixels(.fill.quaternary) : pixels(Color.white.opacity(0.52))
         #expect(actual == expected)
     }
