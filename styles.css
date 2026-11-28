@@ -273,16 +273,19 @@ kbd {
     --fade-x: linear-gradient(90deg, transparent 40%, #000 62%);
   }
 }
-/* Phones: only a corner peeks out, right of "Your windows." and just below the header; it fades out before
-   the headline's second line. */
+/* Phones: two window tops peek out right of "Your windows.", below the header. The echo keeps its desktop
+   scale (720px wide, so 1 unit = 1px). The headline is 9.7vw, so the vw offset keeps the gutter 30px right
+   of the period. The top fade hides the wide pane above; the bottom fade ends before the second line. */
 @media (max-width: 600px) {
   .hero-panes {
-    top: 0; right: -40px; width: 360px; max-width: none;
-    --fade-x: linear-gradient(90deg, transparent 50%, #000 70%);
-    --fade-y: linear-gradient(180deg, transparent 8%, #000 20%, #000 30%, transparent 44%);
+    top: -40px; right: calc(34.7vw - 232px); width: 720px; max-width: none;
+    --fade-x: linear-gradient(90deg, transparent 56.9%, #000 69.4%);
+    --fade-y: linear-gradient(180deg, transparent 20%, #000 21.6%, #000 24.6%, transparent 30.4%);
   }
   /* A small corner needs crisper lines to read. */
   .hero-panes g { stroke-opacity: .55; }
+  /* Without JavaScript the header is taller and would cut the echo into stubs. */
+  html:not(.js) .hero-panes { display: none; }
 }
 .hero-copy { color: var(--on-field); }
 .hero h1 {
