@@ -472,10 +472,9 @@ public issue.
 
 ## Acknowledgements
 
-- **[Vorssaint](https://github.com/vorssaint/vorssaint-utils)** — BetterTile includes
-  adapted settings and menu-panel presentation code from Vorssaint. Its
-  demand-based service ownership shaped BetterTile's runtime lifecycle.
-  See [Third-party notices](THIRD_PARTY_NOTICES.md) for attribution and terms.
+- **[Vorssaint](https://github.com/vorssaint/vorssaint-utils)** — an inspiration
+  for BetterTile's settings window, menu panel and demand-based runtime
+  lifecycle.
 - **[Rectangle](https://github.com/rxhanson/Rectangle)** — a reference for
   event-driven window management on macOS.
 
