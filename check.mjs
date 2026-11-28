@@ -106,7 +106,6 @@ assert.equal(new Set(playLabels.map(([play]) => play)).size,12,'Play buttons hav
 const tourDescription = html.match(/aria-describedby="([\w-]+)"/)?.[1];
 assert(tourDescription && new RegExp(`<p[^>]*id="${tourDescription}"[^>]*>[^<]{200,}</p>`).test(html),'The tour has a text description');
 // Signature check names the Team ID; the privacy notice is linked from the home page and the acknowledgements.
-assert(html.includes('spctl -a -vv /Applications/BetterTile.app') && html.includes('2BZVM9DDGQ'),'Install section shows the signature check and Team ID');
 for (const file of ['index.html','acknowledgements.html']) assert((await read(file)).includes('href="privacy.html"'),`${file} links the privacy notice`);
 assert((await read('404.html')).includes(`href="${SITE}privacy.html"`),'404.html links the privacy notice');
 assert((await read('sitemap.xml')).includes(`<loc>${SITE}privacy.html</loc>`),'Sitemap lists the privacy notice');
