@@ -257,16 +257,36 @@ kbd {
 /* A faint corner of the closing's tiled desktop, so the two screens are the same desktop. It sits right of the
    headline and above the offer, below the header capsule, and fades before any text or the film. */
 .hero-panes {
-  position: absolute; top: 96px; right: 0; width: min(460px, 32%); height: auto;
-  --fade-x: linear-gradient(90deg, transparent, #000 46%);
-  --fade-y: linear-gradient(180deg, transparent, #000 16%, #000 34%, transparent 60%);
+  position: absolute; top: 28px; right: 0; width: min(700px, 48%); height: auto;
+  --fade-x: linear-gradient(90deg, transparent 22%, #000 54%);
+  --fade-y: linear-gradient(180deg, transparent 4%, #000 20%, #000 38%, transparent 58%);
   -webkit-mask-image: var(--fade-x), var(--fade-y);
   -webkit-mask-composite: source-in;
   mask-image: var(--fade-x), var(--fade-y);
   mask-composite: intersect;
 }
 .hero-panes rect { vector-effect: non-scaling-stroke; stroke-width: 1; }
-@media (max-width: 900px) { .hero-panes { display: none; } }
+/* Tablets: the headline is narrower, so the echo sits to its right and fades before the offer. */
+@media (min-width: 601px) and (max-width: 900px) {
+  .hero-panes {
+    top: 24px; width: min(440px, 52%);
+    --fade-x: linear-gradient(90deg, transparent 40%, #000 62%);
+  }
+}
+/* Phones: two window tops peek out right of "Your windows.", below the header. The echo keeps its desktop
+   scale (720px wide, so 1 unit = 1px). The headline is 9.7vw, so the vw offset keeps the gutter 30px right
+   of the period. The top fade hides the wide pane above; the bottom fade ends before the second line. */
+@media (max-width: 600px) {
+  .hero-panes {
+    top: -40px; right: calc(34.7vw - 232px); width: 720px; max-width: none;
+    --fade-x: linear-gradient(90deg, transparent 56.9%, #000 69.4%);
+    --fade-y: linear-gradient(180deg, transparent 20%, #000 21.6%, #000 24.6%, transparent 30.4%);
+  }
+  /* A small corner needs crisper lines to read. */
+  .hero-panes g { stroke-opacity: .55; }
+  /* Without JavaScript the header is taller and would cut the echo into stubs. */
+  html:not(.js) .hero-panes { display: none; }
+}
 .hero-copy { color: var(--on-field); }
 .hero h1 {
   font-size: var(--t-display); line-height: 1; font-weight: 680; letter-spacing: -.038em;
@@ -322,7 +342,7 @@ kbd {
   .hero h1 { font-size: min(var(--t-display), 4.75rem); }
   .hero-foot { margin-top: 24px; }
   .media-hero { margin-top: 24px; }
-  .hero-panes { top: 84px; width: min(400px, 28%); }
+  .hero-panes { top: 20px; width: min(620px, 44%); }
 }
 /* MacBook windows with the Dock (1440×760, 1440×720): type and spacing step down once more, and from 1240px
    the offer takes two lines instead of three (one row with Download). Only then does the film narrow, and only
@@ -334,7 +354,7 @@ kbd {
   .hero h1 { font-size: min(var(--t-display), 4.25rem); }
   .hero-foot { margin-top: 20px; }
   /* The offer moves up into the echo's lower panes, so the echo is a little smaller and fades out sooner. */
-  .hero-panes { width: min(380px, 26%); --fade-y: linear-gradient(180deg, transparent, #000 14%, #000 28%, transparent 46%); }
+  .hero-panes { width: min(560px, 40%); --fade-y: linear-gradient(180deg, transparent 4%, #000 20%, #000 34%, transparent 52%); }
   .media-hero {
     margin-top: 20px; margin-inline: auto;
     /* Below 1240px the offer wraps under the headline, so the film starts lower (≤ 450px). */
