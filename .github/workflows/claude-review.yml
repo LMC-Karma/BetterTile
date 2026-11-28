@@ -130,3 +130,16 @@ jobs:
       - uses: anthropics/claude-code-action@c84e279f859e2591391e95bd309286eb111c345f # v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # This job answers questions. It reads the code and the pull request
+          # and replies in the action's tracking comment; it does not push
+          # (contents: read). The action itself adds Read, Glob, Grep, LS, the
+          # tracking-comment tool, and git wrappers to the allow list, and runs
+          # in auto mode, where a safety review can pass calls that no rule
+          # covers. --permission-mode default (the last mode given wins) denies
+          # every call that no rule allows. The deny list removes file edits and
+          # the git wrappers, which the action maps from these git rules.
+          claude_args: >-
+            --permission-mode default
+            --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh issue view:*)"
+            --disallowedTools "Edit,MultiEdit,Write,NotebookEdit,Bash(git add:*),Bash(git rm:*),Bash(git commit:*),Bash(git push:*)"
+            --max-turns 40

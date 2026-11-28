@@ -34,7 +34,7 @@
   <a href="https://github.com/LMC-Karma/BetterTile/actions/workflows/ci.yml"><img src="https://github.com/LMC-Karma/BetterTile/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
   <a href="#what-you-need"><img src="https://img.shields.io/badge/platform-macOS%2026%2B-lightgrey.svg" alt="macOS 26 or later"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg" alt="License: GPL v3 or later"></a>
-  <a href="#bettertile-is-free"><img src="https://img.shields.io/badge/price-free%20forever-brightgreen.svg" alt="Free forever"></a>
+  <a href="#bettertile-is-free"><img src="https://img.shields.io/badge/price-free-brightgreen.svg" alt="Price: free"></a>
 </p>
 
 <p align="center">
@@ -275,7 +275,9 @@ plain-text report of versions, displays, layout modes, window counts, and
 settings on the pasteboard for a bug report. It contains no window titles, app
 names, or file paths, and BetterTile sends nothing.
 
-Read [Security and privacy](SECURITY.md) for the policy and vulnerability
+Read the [privacy notice](https://lmc-karma.github.io/BetterTile/privacy.html)
+for how the website, the app, and bug reports handle data. Read
+[Security and privacy](SECURITY.md) for the policy and vulnerability
 reporting, and [Security disclosures](docs/SECURITY_DISCLOSURES.md) for the
 input scope, network disclosure, private observations, and fallback behavior.
 
@@ -291,8 +293,8 @@ input scope, network disclosure, private observations, and fallback behavior.
   dragging is unavailable.
 - **Some apps restrict window sizes.** Broader real-app stacking,
   multi-display, and Space-switch behavior remains under validation. Read the
-  [latest release notes](docs/releases/0.6.2-beta.md), or browse
-  [all releases](https://github.com/LMC-Karma/BetterTile/releases).
+  [latest release notes](https://github.com/LMC-Karma/BetterTile/releases/latest),
+  or browse [all release notes](docs/releases/).
 
 ## How it compares
 
@@ -342,16 +344,32 @@ Setup and turn it on.
 
 ### How do I verify the download?
 
-Every release has a `.sha256` file beside the `.dmg`. Download both into one
-folder, then run this in that folder:
+Check who signed the app. Drag BetterTile into **Applications**, then run this
+before you open it:
 
 ```sh
-shasum -a 256 -c BetterTile-0.6.2-beta.dmg.sha256
+spctl -a -vv /Applications/BetterTile.app
 ```
 
-Use the file name of the version you downloaded. The command prints `OK` when the
-file matches. The checksum comes from the same release page as the download, so
-it detects a damaged download. It does not prove who built the file.
+The output must say `accepted` and `source=Notarized Developer ID`. The
+`origin` line must end with `(2BZVM9DDGQ)`, BetterTile's Apple Team ID. An app
+signed by another team is not an official BetterTile release, even when macOS
+accepts it. To print only the Team ID, run
+`codesign -dv /Applications/BetterTile.app 2>&1 | grep TeamIdentifier`. It must
+print `TeamIdentifier=2BZVM9DDGQ`.
+
+Every release also has a `.sha256` file beside each `.dmg`. Download both into
+one folder, then run this in that folder:
+
+```sh
+shasum -a 256 -c BetterTile.dmg.sha256
+```
+
+Use the file name of the disk image you downloaded, for example
+`BetterTile-0.7.0-beta.dmg.sha256`. The command prints `OK` when the file
+matches. The checksum comes from the same release page as the download, so it
+detects a damaged download. It does not prove who built the file; the signature
+check above does.
 
 ### Does it run on an Intel Mac or on macOS before 26?
 
@@ -366,7 +384,9 @@ supports macOS before 26.
 Only update checks and downloads contact a server, and that server is GitHub.
 They send no window data, configuration, analytics, telemetry, crash reports,
 or system profile. **Send Feedback** opens a GitHub form in your browser and
-submits nothing by itself. Read [Private by default](#private-by-default) and [Security and privacy](SECURITY.md).
+submits nothing by itself. Read [Private by default](#private-by-default), the
+[privacy notice](https://lmc-karma.github.io/BetterTile/privacy.html), and
+[Security and privacy](SECURITY.md).
 
 ### Can I turn off the private APIs?
 
@@ -425,7 +445,7 @@ public issue.
 <h2 align="center" id="bettertile-is-free">BetterTile is free</h2>
 
 <p align="center">
-  Free forever. No paid tier, subscription, trial, or features held behind a purchase.<br>
+  Free. No paid tier, subscription, trial, or features held behind a purchase.<br>
   Open source under the <a href="LICENSE">GNU GPL v3 or later</a>.<br>
   Use it, read it, fork it, and share modified versions under the same license.
 </p>
@@ -441,7 +461,7 @@ public issue.
 - [Contributing](CONTRIBUTING.md) — branch, test, and pull-request workflow.
 - [Architecture](docs/ARCHITECTURE.md) — layers, coordinates, window mutations, and Adaptive.
 - [Domain glossary](CONTEXT.md) — shared BetterTile terms.
-- [Release notes](docs/releases/0.6.2-beta.md) — what changed in the latest beta. [All releases](https://github.com/LMC-Karma/BetterTile/releases).
+- [Release notes](https://github.com/LMC-Karma/BetterTile/releases/latest) — what changed in the latest beta. [All release notes](docs/releases/).
 - [Beta releases](docs/RELEASING.md) — version, validate, sign, and publish an update.
 - [Security and privacy](SECURITY.md) — permissions, networking, and reporting policy.
 - [Security disclosures](docs/SECURITY_DISCLOSURES.md) — per-feature privacy and security records.

@@ -58,8 +58,6 @@ Out of scope:
 - a flaw in macOS, in another application, or in Sparkle itself. Report these to
   Apple, to the application's maker, or to the
   [Sparkle project](https://github.com/sparkle-project/Sparkle).
-- the missing notarization of a release. This is documented under
-  [Distribution](#distribution-and-updates).
 - a report with no demonstrated effect on security or privacy
 
 ## Security and privacy commitments
