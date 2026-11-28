@@ -89,7 +89,7 @@ for (const tag of videos) {
   assert(/\bmuted\b/.test(tag) && /\bplaysinline\b/.test(tag) && /preload="none"/.test(tag) && !/\bautoplay\b/.test(tag),`Silent, inline, lazy video without autoplay: ${tag.slice(0, 80)}`);
   assert(/poster="assets\/media\/[\w-]+\.jpg"/.test(tag),'Each video has a local poster');
 }
-assert(/<figure[^>]*id="tour"/.test(html) && !/data-play="manual"/.test(html),'The tour plays in view like the feature demos');
+assert(/<figure[^>]*id="tour"/.test(html) && !/data-play="manual"/.test(html),'The tour plays in view; the feature demos play on press');
 assert(html.includes('<source src="assets/media/overview.mp4"'),'The tour is the overview video');
 // Phones (600 px and narrower) get the small -phone encode; the desktop file stays the fallback after it.
 for (const [, inner] of html.matchAll(/<video\b[^>]*>([\s\S]*?)<\/video>/g)) {
@@ -105,7 +105,7 @@ assert.equal(new Set(playLabels.map(([play]) => play)).size,12,'Play buttons hav
 // The silent tour has a real text description.
 const tourDescription = html.match(/aria-describedby="([\w-]+)"/)?.[1];
 assert(tourDescription && new RegExp(`<p[^>]*id="${tourDescription}"[^>]*>[^<]{200,}</p>`).test(html),'The tour has a text description');
-// Signature check names the Team ID; the privacy notice is linked from the home page and the acknowledgements.
+// The privacy notice is linked from the home page and the acknowledgements.
 for (const file of ['index.html','acknowledgements.html']) assert((await read(file)).includes('href="privacy.html"'),`${file} links the privacy notice`);
 assert((await read('404.html')).includes(`href="${SITE}privacy.html"`),'404.html links the privacy notice');
 assert((await read('sitemap.xml')).includes(`<loc>${SITE}privacy.html</loc>`),'Sitemap lists the privacy notice');

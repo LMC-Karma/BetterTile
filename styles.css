@@ -437,7 +437,7 @@ code {
    pointer target too. */
 .js .media-frame video { cursor: pointer; }
 
-/* The tour plays by itself like the feature demos, with the same corner control. */
+/* The tour plays by itself in view; the feature demos wait for a press. Both use the same corner control. */
 .tour-stage { position: relative; }
 .media-tour .media-frame video { aspect-ratio: 1384 / 778; }
 
